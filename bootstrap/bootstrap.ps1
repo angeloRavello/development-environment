@@ -134,7 +134,14 @@ try {
 
 Write-Host "==> [bootstrap] Stage 5/5: rotz link (symlinking config files)"
 try {
-  Invoke-ExternalCommand -Exe $rotz -Arguments @("--dotfiles", $RepoRoot, "link") -Label "rotz link"
+  # --force: "force link creation if file already exists and was not
+  # created by rotz". Backup-ExistingLinkTargets above already clears every
+  # target it knows about, so in the normal case there's nothing left for
+  # rotz to force past - this is a safety net for anything that step's
+  # narrow dot.yaml parser (Get-DotLinkTargets) might miss, so a future
+  # link this repo doesn't yet know how to parse still gets created
+  # instead of rotz silently skipping it.
+  Invoke-ExternalCommand -Exe $rotz -Arguments @("--dotfiles", $RepoRoot, "link", "--force") -Label "rotz link"
 } catch {
   Write-Host "!!! [bootstrap] Stage 5/5 (rotz link) FAILED: $($_.Exception.Message)"
   throw
