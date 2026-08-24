@@ -135,8 +135,33 @@ DOWNLOADS_DIR=.local/downloads   # where downloaded archives are saved
 INSTALL_DIR=.local/opt           # where they get extracted to, one folder per tool
 ```
 
-Both are relative to `$HOME`/`%USERPROFILE%`, resolved to absolute paths at
-runtime. In practice:
+Each value can be **relative** (joined with `$HOME`/`%USERPROFILE%`, as
+above) or an **absolute path**, e.g.:
+
+```
+DOWNLOADS_DIR=D:\tools\download
+INSTALL_DIR=D:\tools\apps
+```
+
+Windows and Linux paths are never interchangeable, so an absolute path is
+inherently OS-specific - add a `_WINDOWS` or `_LINUX` suffixed key to give
+each OS its own value; it takes priority over the bare key on that OS:
+
+```
+DOWNLOADS_DIR_WINDOWS=D:\tools\download
+DOWNLOADS_DIR_LINUX=/opt/tools/download
+```
+
+If the bare key is absolute and shaped for the *other* OS (a Windows drive
+letter while running on Linux, or the reverse) and no suffixed override
+exists for the OS actually running, every script that resolves these
+(`Get-BootstrapPaths` in `common.ps1`, and `prereq.ps1`/`prereq.sh` by
+hand) fails immediately with a clear message telling you which suffixed
+key to add, instead of silently mangling the path (e.g. joining
+`%USERPROFILE%` with a Windows drive letter path, or trying to `mkdir` a
+literal `D:\tools\download` directory name on Linux).
+
+In practice:
 
 - **`DOWNLOADS_DIR`** ends up holding the raw `.zip`/`.tar.gz`/self-extracting
   `.exe` for every portable tool (mise, git, wezterm, pwsh7 itself) exactly

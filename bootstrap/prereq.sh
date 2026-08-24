@@ -24,19 +24,54 @@ echo "==> [prereq] Dotfiles repo: $REPO_ROOT"
 # --- Step 0: read bootstrap/paths.env (same file bootstrap.ps1 reads later
 # via Get-BootstrapPaths - parsed here with grep/cut since pwsh7 doesn't
 # exist yet to use the PowerShell-side parser) -----------------------------
+#
+# Each key can be an absolute Linux path (e.g. "/opt/tools/download"), a
+# "_LINUX"-suffixed override (e.g. DOWNLOADS_DIR_LINUX=...), or a relative
+# fragment joined with $HOME - see bootstrap/paths.env for the full
+# explanation. A value shaped like a Windows absolute path (a drive letter)
+# is a configuration mistake on Linux, so this fails fast with a clear
+# message instead of silently mangling it.
 CONFIG_FILE="$SCRIPT_DIR/paths.env"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "[prereq] Missing config file: $CONFIG_FILE" >&2
   exit 1
 fi
-DOWNLOADS_DIR_REL="$(grep -E '^DOWNLOADS_DIR=' "$CONFIG_FILE" | head -n1 | cut -d= -f2-)"
-INSTALL_DIR_REL="$(grep -E '^INSTALL_DIR=' "$CONFIG_FILE" | head -n1 | cut -d= -f2-)"
-if [ -z "$DOWNLOADS_DIR_REL" ] || [ -z "$INSTALL_DIR_REL" ]; then
+
+get_config_value() {
+  # $1 = bare key name, e.g. DOWNLOADS_DIR - prefers <key>_LINUX if set
+  local key="$1" suffixed
+  suffixed="$(grep -E "^${key}_LINUX=" "$CONFIG_FILE" | head -n1 | cut -d= -f2-)"
+  if [ -n "$suffixed" ]; then
+    printf '%s' "$suffixed"
+  else
+    grep -E "^${key}=" "$CONFIG_FILE" | head -n1 | cut -d= -f2-
+  fi
+}
+
+resolve_configured_path() {
+  # $1 = key name (for error messages), $2 = raw value from paths.env
+  local key="$1" value="$2"
+  case "$value" in
+    /*) printf '%s' "$value" ;;
+    [A-Za-z]:'\'*|[A-Za-z]:/*)
+      # The '\' above is quoted deliberately - an unquoted \\ in a case
+      # pattern matches two literal backslashes, not one, and would fail
+      # to match a real single-backslash Windows path like "D:\tools\...".
+      echo "[prereq] $key is set to '$value', which looks like a Windows absolute path, but this is Linux. Set ${key}_LINUX in bootstrap/paths.env to a Linux path instead." >&2
+      exit 1
+      ;;
+    *) printf '%s/%s' "$HOME" "$value" ;;
+  esac
+}
+
+DOWNLOADS_DIR_RAW="$(get_config_value DOWNLOADS_DIR)"
+INSTALL_DIR_RAW="$(get_config_value INSTALL_DIR)"
+if [ -z "$DOWNLOADS_DIR_RAW" ] || [ -z "$INSTALL_DIR_RAW" ]; then
   echo "[prereq] $CONFIG_FILE is missing DOWNLOADS_DIR or INSTALL_DIR" >&2
   exit 1
 fi
-DOWNLOADS_DIR="$HOME/$DOWNLOADS_DIR_REL"
-INSTALL_DIR="$HOME/$INSTALL_DIR_REL"
+DOWNLOADS_DIR="$(resolve_configured_path DOWNLOADS_DIR "$DOWNLOADS_DIR_RAW")"
+INSTALL_DIR="$(resolve_configured_path INSTALL_DIR "$INSTALL_DIR_RAW")"
 mkdir -p "$DOWNLOADS_DIR" "$INSTALL_DIR"
 echo "==> [prereq] DownloadsDir: $DOWNLOADS_DIR"
 echo "==> [prereq] InstallDir:   $INSTALL_DIR"

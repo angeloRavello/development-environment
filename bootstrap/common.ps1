@@ -8,12 +8,55 @@
 # Everything here installs into the current user's profile only - no
 # admin/sudo required.
 
+# Resolves one raw value from paths.env into a final absolute path:
+#   - Already absolute FOR THE CURRENT OS (Windows: "D:\..."/"D:/..." or a
+#     "\\server\share" UNC path; Linux: starts with "/") -> used exactly as
+#     given, never joined with home.
+#   - Looks absolute but shaped for the OTHER OS (a Windows drive-letter
+#     path while running on Linux, or a leading "/" path while running on
+#     Windows) -> throws a clear, actionable error instead of silently
+#     mangling it. Windows and Linux paths are never interchangeable -
+#     backslashes and drive letters mean nothing on Linux, and a leading
+#     "/" is just another path segment on Windows, not root.
+#   - Otherwise (e.g. ".local/downloads") -> treated as relative and
+#     joined with $HomeDir, same as before this could hold absolute paths.
+function Resolve-ConfiguredPath {
+  param(
+    [Parameter(Mandatory)][string]$Value,
+    [Parameter(Mandatory)][string]$HomeDir,
+    [Parameter(Mandatory)][string]$KeyName   # only used to make error messages point at the right paths.env key
+  )
+  $looksWindowsAbsolute = ($Value -match '^[A-Za-z]:[\\/]') -or ($Value -match '^\\\\')
+  $looksLinuxAbsolute = $Value -match '^/'
+
+  if ($IsWindows) {
+    if ($looksWindowsAbsolute) { return $Value }
+    if ($looksLinuxAbsolute) {
+      throw "$KeyName is set to '$Value', which looks like a Linux absolute path, but this is Windows. Set ${KeyName}_WINDOWS in bootstrap/paths.env to a Windows path (e.g. D:\tools\...) instead."
+    }
+  } else {
+    if ($looksLinuxAbsolute) { return $Value }
+    if ($looksWindowsAbsolute) {
+      throw "$KeyName is set to '$Value', which looks like a Windows absolute path, but this is Linux. Set ${KeyName}_LINUX in bootstrap/paths.env to a Linux path (e.g. /opt/tools/...) instead."
+    }
+  }
+
+  return "$HomeDir/$Value"
+}
+
 # Reads bootstrap/paths.env - the single source of truth for where
-# downloaded archives and extracted tools live - and resolves both values
-# to absolute paths under the current user's home directory, creating them
-# if they don't exist yet. Every script that downloads/extracts a portable
-# tool calls this instead of hardcoding ".local/downloads"/".local/opt"
-# itself, so there's exactly one place to change where things land.
+# downloaded archives and extracted tools live - and resolves all three
+# values to absolute paths, creating them if they don't exist yet. Every
+# script that downloads/extracts a portable tool calls this instead of
+# hardcoding ".local/downloads"/".local/opt" itself, so there's exactly
+# one place to change where things land.
+#
+# Each key (DOWNLOADS_DIR/INSTALL_DIR/BACKUP_DIR) can be overridden with a
+# separate value per OS by adding a "_WINDOWS" or "_LINUX" suffixed key -
+# e.g. DOWNLOADS_DIR_WINDOWS=D:\tools\download. If no suffixed key exists
+# for the current OS, the bare key is used (and can itself be either an
+# absolute path for the current OS, or a relative fragment joined with
+# home - see Resolve-ConfiguredPath above).
 function Get-BootstrapPaths {
   $homeDir = if ($IsWindows) { $env:USERPROFILE } else { $HOME }
   $configPath = "$PSScriptRoot/paths.env"
@@ -31,9 +74,14 @@ function Get-BootstrapPaths {
     if (-not $raw.ContainsKey($key)) { throw "$configPath is missing required key $key" }
   }
 
-  $downloadsDir = "$homeDir/$($raw['DOWNLOADS_DIR'])"
-  $installDir = "$homeDir/$($raw['INSTALL_DIR'])"
-  $backupDir = "$homeDir/$($raw['BACKUP_DIR'])"
+  $osSuffix = if ($IsWindows) { "_WINDOWS" } else { "_LINUX" }
+  $downloadsRaw = if ($raw.ContainsKey("DOWNLOADS_DIR$osSuffix")) { $raw["DOWNLOADS_DIR$osSuffix"] } else { $raw['DOWNLOADS_DIR'] }
+  $installRaw = if ($raw.ContainsKey("INSTALL_DIR$osSuffix")) { $raw["INSTALL_DIR$osSuffix"] } else { $raw['INSTALL_DIR'] }
+  $backupRaw = if ($raw.ContainsKey("BACKUP_DIR$osSuffix")) { $raw["BACKUP_DIR$osSuffix"] } else { $raw['BACKUP_DIR'] }
+
+  $downloadsDir = Resolve-ConfiguredPath -Value $downloadsRaw -HomeDir $homeDir -KeyName "DOWNLOADS_DIR"
+  $installDir = Resolve-ConfiguredPath -Value $installRaw -HomeDir $homeDir -KeyName "INSTALL_DIR"
+  $backupDir = Resolve-ConfiguredPath -Value $backupRaw -HomeDir $homeDir -KeyName "BACKUP_DIR"
 
   New-Item -ItemType Directory -Force -Path $downloadsDir | Out-Null
   New-Item -ItemType Directory -Force -Path $installDir | Out-Null

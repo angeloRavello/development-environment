@@ -28,6 +28,22 @@ Write-Host "==> [prereq] Dotfiles repo: $RepoRoot"
 # --- Step 0: read bootstrap/paths.env (same file bootstrap.ps1 reads later
 # via Get-BootstrapPaths - parsed by hand here since common.ps1's helper is
 # pwsh7-only and pwsh7 doesn't exist yet at this point) --------------------
+#
+# Each key can be an absolute Windows path (e.g. "D:\tools\download"), a
+# "_WINDOWS"-suffixed override (e.g. DOWNLOADS_DIR_WINDOWS=...), or a
+# relative fragment joined with %USERPROFILE% - see bootstrap/paths.env
+# for the full explanation. A value that looks like a Linux absolute path
+# (starts with "/") is a configuration mistake on Windows, so this fails
+# fast with a clear message instead of silently mangling it.
+function Resolve-ConfiguredPathWindows {
+  param([string]$Value, [string]$HomeDir, [string]$KeyName)
+  if (($Value -match '^[A-Za-z]:[\\/]') -or ($Value -match '^\\\\')) { return $Value }
+  if ($Value -match '^/') {
+    throw "[prereq] $KeyName is set to '$Value', which looks like a Linux absolute path, but this is Windows. Set ${KeyName}_WINDOWS in bootstrap/paths.env to a Windows path instead."
+  }
+  return Join-Path $HomeDir $Value
+}
+
 $configPath = Join-Path $RepoRoot "bootstrap\paths.env"
 if (-not (Test-Path $configPath)) { throw "[prereq] Missing config file: $configPath" }
 $rawConfig = @{}
@@ -38,8 +54,10 @@ Get-Content $configPath | ForEach-Object {
 foreach ($key in @("DOWNLOADS_DIR", "INSTALL_DIR")) {
   if (-not $rawConfig.ContainsKey($key)) { throw "[prereq] $configPath is missing required key $key" }
 }
-$downloadsDir = Join-Path $env:USERPROFILE $rawConfig["DOWNLOADS_DIR"]
-$installDir = Join-Path $env:USERPROFILE $rawConfig["INSTALL_DIR"]
+$downloadsRaw = if ($rawConfig.ContainsKey("DOWNLOADS_DIR_WINDOWS")) { $rawConfig["DOWNLOADS_DIR_WINDOWS"] } else { $rawConfig["DOWNLOADS_DIR"] }
+$installRaw = if ($rawConfig.ContainsKey("INSTALL_DIR_WINDOWS")) { $rawConfig["INSTALL_DIR_WINDOWS"] } else { $rawConfig["INSTALL_DIR"] }
+$downloadsDir = Resolve-ConfiguredPathWindows -Value $downloadsRaw -HomeDir $env:USERPROFILE -KeyName "DOWNLOADS_DIR"
+$installDir = Resolve-ConfiguredPathWindows -Value $installRaw -HomeDir $env:USERPROFILE -KeyName "INSTALL_DIR"
 New-Item -ItemType Directory -Force -Path $downloadsDir | Out-Null
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Write-Host "==> [prereq] DownloadsDir: $downloadsDir"
