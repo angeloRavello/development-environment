@@ -25,9 +25,29 @@ Write-Host "==> [prereq] Running under Windows PowerShell $($PSVersionTable.PSVe
 $RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
 Write-Host "==> [prereq] Dotfiles repo: $RepoRoot"
 
+# --- Step 0: read bootstrap/paths.env (same file bootstrap.ps1 reads later
+# via Get-BootstrapPaths - parsed by hand here since common.ps1's helper is
+# pwsh7-only and pwsh7 doesn't exist yet at this point) --------------------
+$configPath = Join-Path $RepoRoot "bootstrap\paths.env"
+if (-not (Test-Path $configPath)) { throw "[prereq] Missing config file: $configPath" }
+$rawConfig = @{}
+Get-Content $configPath | ForEach-Object {
+  if ($_ -match '^\s*#' -or $_ -match '^\s*$') { return }
+  if ($_ -match '^([A-Z_]+)=(.*)$') { $rawConfig[$matches[1]] = $matches[2].Trim() }
+}
+foreach ($key in @("DOWNLOADS_DIR", "INSTALL_DIR")) {
+  if (-not $rawConfig.ContainsKey($key)) { throw "[prereq] $configPath is missing required key $key" }
+}
+$downloadsDir = Join-Path $env:USERPROFILE $rawConfig["DOWNLOADS_DIR"]
+$installDir = Join-Path $env:USERPROFILE $rawConfig["INSTALL_DIR"]
+New-Item -ItemType Directory -Force -Path $downloadsDir | Out-Null
+New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+Write-Host "==> [prereq] DownloadsDir: $downloadsDir"
+Write-Host "==> [prereq] InstallDir:   $installDir"
+
 # --- Step 1: is pwsh7 already available anywhere on PATH? -------------
 $existing = Get-Command pwsh -ErrorAction SilentlyContinue
-$destDir = Join-Path $env:USERPROFILE ".local\opt\pwsh7"
+$destDir = Join-Path $installDir "pwsh7"
 $pwshExe = Join-Path $destDir "pwsh.exe"
 
 if ($existing) {
@@ -54,20 +74,25 @@ if ($existing) {
   $url = $asset.browser_download_url
   Write-Host "==> [prereq] Resolved download URL: $url"
 
-  # --- Step 3: download the zip (guarded with a timeout) ---------------
-  $tmpZip = Join-Path $env:TEMP ("pwsh7_" + [guid]::NewGuid().ToString() + ".zip")
-  Write-Host "==> [prereq] Downloading to $tmpZip (timeout 300s)"
-  try {
-    Invoke-WebRequest -UseBasicParsing -TimeoutSec 300 -Uri $url -OutFile $tmpZip
-  } catch {
-    throw "[prereq] Timed out or failed downloading $url after 300s (offline? behind a proxy/firewall?): $($_.Exception.Message)"
+  # --- Step 3: download the zip into DownloadsDir (guarded with a timeout,
+  # kept afterwards - not deleted - so a re-run skips re-downloading it) ---
+  $zipFileName = Split-Path -Leaf ([Uri]$url).AbsolutePath
+  $zipPath = Join-Path $downloadsDir $zipFileName
+  if (Test-Path $zipPath) {
+    Write-Host "==> [prereq] Already downloaded at $zipPath - skipping download"
+  } else {
+    Write-Host "==> [prereq] Downloading to $zipPath (timeout 300s)"
+    try {
+      Invoke-WebRequest -UseBasicParsing -TimeoutSec 300 -Uri $url -OutFile $zipPath
+    } catch {
+      throw "[prereq] Timed out or failed downloading $url after 300s (offline? behind a proxy/firewall?): $($_.Exception.Message)"
+    }
   }
-  Write-Host "==> [prereq] Download complete ($((Get-Item $tmpZip).Length) bytes) - extracting to $destDir"
+  Write-Host "==> [prereq] $((Get-Item $zipPath).Length) bytes - extracting to $destDir"
 
   # --- Step 4: extract ---------------------------------------------------
   New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-  Expand-Archive -Path $tmpZip -DestinationPath $destDir -Force
-  Remove-Item $tmpZip -Force
+  Expand-Archive -Path $zipPath -DestinationPath $destDir -Force
 
   if (-not (Test-Path $pwshExe)) {
     throw "[prereq] pwsh.exe not found at $pwshExe after extracting - archive layout may have changed"

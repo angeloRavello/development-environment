@@ -21,7 +21,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 echo "==> [prereq] Dotfiles repo: $REPO_ROOT"
 
-DEST_DIR="$HOME/.local/opt/pwsh7"
+# --- Step 0: read bootstrap/paths.env (same file bootstrap.ps1 reads later
+# via Get-BootstrapPaths - parsed here with grep/cut since pwsh7 doesn't
+# exist yet to use the PowerShell-side parser) -----------------------------
+CONFIG_FILE="$SCRIPT_DIR/paths.env"
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "[prereq] Missing config file: $CONFIG_FILE" >&2
+  exit 1
+fi
+DOWNLOADS_DIR_REL="$(grep -E '^DOWNLOADS_DIR=' "$CONFIG_FILE" | head -n1 | cut -d= -f2-)"
+INSTALL_DIR_REL="$(grep -E '^INSTALL_DIR=' "$CONFIG_FILE" | head -n1 | cut -d= -f2-)"
+if [ -z "$DOWNLOADS_DIR_REL" ] || [ -z "$INSTALL_DIR_REL" ]; then
+  echo "[prereq] $CONFIG_FILE is missing DOWNLOADS_DIR or INSTALL_DIR" >&2
+  exit 1
+fi
+DOWNLOADS_DIR="$HOME/$DOWNLOADS_DIR_REL"
+INSTALL_DIR="$HOME/$INSTALL_DIR_REL"
+mkdir -p "$DOWNLOADS_DIR" "$INSTALL_DIR"
+echo "==> [prereq] DownloadsDir: $DOWNLOADS_DIR"
+echo "==> [prereq] InstallDir:   $INSTALL_DIR"
+
+DEST_DIR="$INSTALL_DIR/pwsh7"
 PWSH_BIN="$DEST_DIR/pwsh"
 
 # --- Step 1: is pwsh7 already available anywhere on PATH? -----------------
@@ -50,16 +70,21 @@ else
   fi
   echo "==> [prereq] Resolved download URL: $URL"
 
-  # --- Step 3: download the tarball (guarded with a timeout) --------------
-  TMP_TAR="$(mktemp --suffix=.tar.gz)"
-  echo "==> [prereq] Downloading to $TMP_TAR (timeout 300s)"
-  curl -fsSL --max-time 300 "$URL" -o "$TMP_TAR"
-  echo "==> [prereq] Download complete ($(du -h "$TMP_TAR" | cut -f1)) - extracting to $DEST_DIR"
+  # --- Step 3: download the tarball into DOWNLOADS_DIR (guarded with a
+  # timeout, kept afterwards - not deleted - so a re-run skips the download) -
+  TAR_FILE_NAME="$(basename "$URL")"
+  TAR_PATH="$DOWNLOADS_DIR/$TAR_FILE_NAME"
+  if [ -f "$TAR_PATH" ]; then
+    echo "==> [prereq] Already downloaded at $TAR_PATH - skipping download"
+  else
+    echo "==> [prereq] Downloading to $TAR_PATH (timeout 300s)"
+    curl -fsSL --max-time 300 "$URL" -o "$TAR_PATH"
+  fi
+  echo "==> [prereq] $(du -h "$TAR_PATH" | cut -f1) - extracting to $DEST_DIR"
 
   # --- Step 4: extract ------------------------------------------------------
   mkdir -p "$DEST_DIR"
-  tar -xzf "$TMP_TAR" -C "$DEST_DIR"
-  rm -f "$TMP_TAR"
+  tar -xzf "$TAR_PATH" -C "$DEST_DIR"
   chmod +x "$PWSH_BIN"
 
   if [ ! -x "$PWSH_BIN" ]; then
