@@ -33,11 +33,53 @@ Each top-level folder (`git`, `mise`, `python`, `java`, `rust`, `zig`, `yazi`, `
    2. On Windows only: sets `XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`XDG_CACHE_HOME`/`XDG_STATE_HOME` under `%USERPROFILE%` so tools resolve config the same way Linux does by default.
    3. Installs `mise` (portable, user-scoped) via `mise/install.ps1`.
    4. Installs `rotz` itself through mise's generic GitHub backend (`mise use --global github:volllly/rotz`) — rotz has no mise registry entry but does publish standard target-triple release zips.
-   5. Runs `rotz install --continue-on-error` (executes every dot's install command), then `rotz link` (symlinks every dot's config files). Install always runs before link — dots like `neovim` depend on their clone step existing before overrides get linked on top.
+   5. Backs up any pre-existing real dotfile a `dot.yaml` is about to symlink over, via `Backup-ExistingLinkTargets` (see below).
+   6. Runs `rotz install --continue-on-error` (executes every dot's install command), then `rotz link` (symlinks every dot's config files). Install always runs before link — dots like `neovim` depend on their clone step existing before overrides get linked on top.
 
 Every stage prints `==> [stage] ...` plus the key values involved (resolved paths, download URLs, versions) specifically so a hang or failure can be pinpointed from console output alone — this was added after the previous two-dialect scripts hung silently with no indication of where.
 
-`bootstrap/common.ps1` holds shared helpers (`Get-LatestGithubAsset`, `Install-PortableZip`, `Install-PortableTarGz`, `Add-UserPath`, `Set-UserEnvVar`) used by `bootstrap.ps1` and every per-tool `install.ps1`. `Add-UserPath`/`Set-UserEnvVar` branch internally on `$IsWindows` (registry `HKCU\Environment`) vs. Linux (`~/.profile`/`~/.bashrc`, idempotent append).
+`bootstrap/common.ps1` holds shared helpers (`Get-BootstrapPaths`, `Get-LatestGithubAsset`, `Install-PortableZip`, `Install-PortableTarGz`, `Add-UserPath`, `Set-UserEnvVar`, `Invoke-ExternalCommand`, `Get-DotLinkTargets`, `Backup-ExistingLinkTargets`) used by `bootstrap.ps1` and every per-tool `install.ps1`. `Add-UserPath`/`Set-UserEnvVar` branch internally on `$IsWindows` (registry `HKCU\Environment`) vs. Linux (`~/.profile`/`~/.bashrc`, idempotent append).
+
+## Where downloads and installs land: `bootstrap/paths.env`
+
+Single source of truth for two paths, read by `Get-BootstrapPaths`, plain `KEY=value` text (not YAML/PSD1):
+```
+DOWNLOADS_DIR=.local/downloads   # raw downloaded archives - kept, not deleted, after extraction (cache by filename)
+INSTALL_DIR=.local/opt           # extracted tools, one subfolder per tool: <INSTALL_DIR>/git, /wezterm, /mise, /pwsh7
+```
+Both relative to `$HOME`/`%USERPROFILE%`. `Install-PortableZip`/`Install-PortableTarGz` take `-DownloadsDir` and `-DestDir` params derived from this — no script hardcodes `.local/opt/<tool>` or a temp path anymore. Every install script resolves its executable dynamically from inside its own `INSTALL_DIR` subfolder (via `Get-ChildItem -Recurse` for the binary name) rather than assuming an exact archive layout, since flattening/nesting varies per tool's zip.
+
+This file has to be plain text, not a PowerShell data file, because `prereq.ps1` (Windows PowerShell 5.1) and `prereq.sh` (bash) both parse it by hand — they run *before* pwsh7/`common.ps1` exist, so they can't use `Get-BootstrapPaths`. If you add a new config key, update the parser in all three places: `Get-BootstrapPaths` in `common.ps1`, the regex loop in `prereq.ps1`, and the `grep`/`cut` lines in `prereq.sh`.
+
+Two exceptions to `INSTALL_DIR`, both called out in comments at their call sites: mise on Linux is installed by mise's own official installer (`curl https://mise.run | sh`), which picks `~/.local/bin/mise` on its own; and mise's *internal* data (installed toolchains, shims) lives under `~/.local/share/mise/...` — mise's own convention, unrelated to this repo's `INSTALL_DIR`.
+
+Because mise's own binary no longer lives at a fixed path (Windows: wherever it lands under `<INSTALL_DIR>/mise`, dynamically discovered), `bootstrap.ps1` resolves `$miseExe` via `Get-Command mise` after `mise/install.ps1` runs (which already added the right folder to the current session's PATH) instead of hardcoding a second guess that could drift out of sync.
+
+## Backing up pre-existing dotfiles before `rotz link` overwrites them
+
+`bootstrap.ps1` Stage 4/5 calls `Backup-ExistingLinkTargets -RepoRoot $RepoRoot -BackupDir $paths.BackupDir` (paths from `Get-BootstrapPaths`, `BACKUP_DIR` in `paths.env`, default `~/.local/backup`) before Stage 5/5 runs `rotz link`. This exists because a machine can already have a real `~/.gitconfig`/`~/.config/nvim`/etc. from before this repo was ever used there, and `rotz link` would otherwise silently replace it.
+
+`Backup-ExistingLinkTargets` (in `common.ps1`) drives itself off the repo's own `dot.yaml` files rather than a separately maintained list:
+- `Get-DotLinkTargets` extracts every target (right-hand side) under a `links:` block by tracking indentation relative to wherever `links:` itself appears — every `dot.yaml` in this repo now uses the flat top-level `links:` style, but the indentation-relative approach would handle a nested-under-`global:` style too if one ever came back. **This is a narrow parser scoped to the exact shape this repo's `links:` blocks use, not a general YAML parser** — no lists, no quoting, flat `key: value` lines only. If a `links:` block ever needs something fancier, this parser needs updating too.
+- For each resolved target: skip if it doesn't exist; skip (leave alone) if it's already a reparse point (`Attributes -band [System.IO.FileAttributes]::ReparsePoint`) — that covers both symlinks and junctions, and means a prior run of this repo already linked it, so there's nothing of the user's to lose; otherwise `Move-Item` it to `<BackupDir>/<timestamp>/<same relative path under home>`, which also vacates the path for `rotz link` to place a symlink there. This makes the whole thing idempotent — the backup step only ever moves something on the *first* run that links a given dotfile, never on repeat runs.
+
+**Windows note, confirmed while building/testing this:** `New-Item -ItemType SymbolicLink` fails with "Administrator privilege required for this operation" without admin or Developer Mode enabled. `config.yaml` sets `link_type: Symbolic`, so `rotz link` itself needs one of those two on Windows — this is a pre-existing constraint of rotz's symlink mode, not something `Backup-ExistingLinkTargets` introduces, but it means `rotz link` can still fail *after* the backup step succeeds if Developer Mode isn't on. (The smoke test for this function used a `Junction` instead of a real symlink for exactly this reason — junctions don't require elevation and are also reparse points, so they exercise the same detection path.)
+
+## yazi's `y` shell wrapper
+
+`yazi/install.ps1` does `mise use --global yazi` *and* installs the official [`y` shell wrapper function](https://yazi-rs.github.io/docs/quick-start#shell-wrapper) into your shell profile — Windows: pwsh7's `$PROFILE` (not Windows PowerShell 5.1's, a different file — this repo assumes pwsh7 is the day-to-day shell); Linux: `~/.bashrc`. Plain `yazi` only affects its own process (quitting always returns you to wherever you started); `y` reads back the directory you navigated to (via `--cwd-file`) and `cd`s your actual shell there.
+
+The write is idempotent via a local `Set-ManagedBlock` helper (defined inline in `yazi/install.ps1`, not `common.ps1` — this pattern is only used once so far): the function body is wrapped in `# >>> yazi shell wrapper ... >>>` / `# <<< ... <<<` marker comments, and if those markers are already present in the profile, everything between them is replaced in place rather than appended again — so editing the wrapper's definition in `yazi/install.ps1` and re-running the bootstrap updates it in the profile too, without duplicating it or touching anything else already in that profile.
+
+## WezTerm is pinned to nightly — the one tool-specific exception
+
+Every other portable tool in this repo installs the latest stable release. `wezterm/install.ps1` deliberately always installs the **nightly** build instead, on both OSes — this is scoped to wezterm only, not a general pattern.
+
+Two `common.ps1` helpers gained optional params for exactly this, unused by every other call site (`git`, `mise`):
+- `Get-LatestGithubAsset -Tag "nightly"` fetches `/releases/tags/nightly` instead of `/releases/latest` — required because WezTerm's nightly is marked `"prerelease": true`, which `/releases/latest` always excludes.
+- `Install-PortableZip -Force` always re-downloads even if a same-named file is already cached in `DownloadsDir` — required because WezTerm's nightly assets (`WezTerm-windows-nightly.zip`) keep the same filename forever while the actual contents change on every build, which would otherwise make the filename-based download cache stick to whatever nightly build was fetched first.
+
+Consequently `wezterm/install.ps1` also never short-circuits on "already installed" like every other install script does — it always re-checks/re-downloads/re-extracts on every bootstrap run. On Linux there's no apt-repo branch at all anymore (even with sudo): WezTerm's apt repo only ships stable builds, so it's dropped entirely in favor of always using the nightly AppImage (pinned to the `Ubuntu20.04` build for broad forward-compatibility — older-glibc AppImages generally still run on newer distros).
 
 ## Every network call has a timeout — this is load-bearing
 
@@ -46,13 +88,13 @@ Every `Invoke-WebRequest`/`Invoke-RestMethod` call passes an explicit `-TimeoutS
 ## Core invariant: no hardcoded paths, no admin/sudo
 
 Every install path in this repo is derived from `$env:USERPROFILE`/`$HOME`, never a hardcoded drive letter or absolute path, so it behaves the same whether Windows puts user profiles on `C:` or `D:`:
-- Windows tools: `%USERPROFILE%\.local\bin`, `%USERPROFILE%\.local\opt\<tool>`
-- Linux tools: `~/.local/bin`, `~/.local/share/mise`, `~/.local/opt/<tool>`
+- Portable tool downloads/installs: `DOWNLOADS_DIR`/`INSTALL_DIR` from `bootstrap/paths.env` (see above) — defaults to `~/.local/downloads` and `~/.local/opt/<tool>`
+- mise's own data: `~/.local/share/mise`, `~/.local/bin` (Linux mise binary only) — mise's own convention, not ours
 - Config files: `~/.config/<tool>/...` on both OSes
 
 PATH changes on Windows go to the **user** registry hive (`HKCU\Environment`) only, never machine-wide PATH. Any new install script must preserve this — no admin/sudo dependency anywhere it's technically avoidable.
 
-`git` and `wezterm` are fetched directly from GitHub Releases as portable zips/AppImage/self-extracting archives (verified against `github.com/jdx/mise/registry/*.toml` to confirm they aren't in mise's registry) rather than via mise, with `$IsWindows`/`$IsLinux` branches inside a single `install.ps1` for the OS-specific download/apt logic. `python`, `rust`, `zig`, `yazi`, `neovim` install via a plain `mise use --global <tool>` one-liner in `dot.yaml` (no install script needed — these were already OS-agnostic before this rewrite). `java` is the exception: it needs multiple JDK versions side-by-side (see below), so it follows the dedicated-script pattern instead of a one-liner.
+`git` and `wezterm` are fetched directly from GitHub Releases as portable zips/AppImage/self-extracting archives (verified against `github.com/jdx/mise/registry/*.toml` to confirm they aren't in mise's registry) rather than via mise, with `$IsWindows`/`$IsLinux` branches inside a single `install.ps1` for the OS-specific download logic (`git` still has an apt branch on Linux; `wezterm` does not — see above). `python`/`rust`/`zig` install via a plain `mise use --global <tool>` one-liner directly in `dot.yaml` (no install script needed — genuinely OS-agnostic, nothing else to do). `neovim` and `yazi` both need a dedicated `install.ps1` despite being mise-installed tools, because each has one extra piece of setup beyond the mise install itself: `neovim` clones LazyVim on first run (see below), `yazi` adds the `y` shell wrapper to your profile (see below). `java` is the other exception: it needs multiple JDK versions side-by-side (see below), so it follows the dedicated-script pattern instead of a one-liner.
 
 ### Java: multiple JDKs side-by-side
 

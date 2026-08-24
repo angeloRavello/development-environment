@@ -18,9 +18,9 @@ tool - see "Why PowerShell 7 for everything" below for why.
 | `mise` | portable zip / official installer | `mise-*-windows-x64.zip` | `curl https://mise.run \| sh` |
 | `python`, `rust`, `zig` | `mise use --global <tool>` | via mise | via mise |
 | `java` | `mise install` OpenJDK 8, 11, 21 and 25 side-by-side; 25 set as `mise use --global` default | via mise | via mise |
-| `yazi` | `mise use --global yazi` + config | via mise | via mise |
+| `yazi` | `mise use --global yazi` + config + `y` shell wrapper (see below) | via mise | via mise |
 | `neovim` + `LazyVim` | `mise use --global neovim` + clone [LazyVim/starter](https://github.com/LazyVim/starter) | via mise | via mise |
-| `wezterm` | portable download | `WezTerm-windows-*.zip` | apt repo (sudo) or portable `.AppImage` (no sudo) |
+| `wezterm` | portable download, **always nightly** (see below) | `WezTerm-windows-nightly.zip` | portable `.AppImage`, nightly (no apt, no sudo) |
 
 `git` and `wezterm` are **not** in mise's tool registry (verified against
 `github.com/jdx/mise/registry/*.toml` before writing this), so those two are
@@ -73,7 +73,9 @@ last line printed tells you exactly which stage to look at.
    3. Installs `rotz` itself through mise's generic GitHub backend
       (`mise use --global github:volllly/rotz` - rotz has no mise registry
       entry, but does publish standard target-triple release zips).
-   4. Runs `rotz install --continue-on-error` (executes every dot's
+   4. Backs up any pre-existing real dotfile a `dot.yaml` is about to
+      symlink over (see "Backing up pre-existing dotfiles" below).
+   5. Runs `rotz install --continue-on-error` (executes every dot's
       install command - now always `pwsh -NoProfile -File <tool>/install.ps1`)
       then `rotz link` (symlinks every dot's config files).
 
@@ -110,18 +112,158 @@ Every install path in this repo is derived from `$env:USERPROFILE` /
 `$HOME` - never a hardcoded drive letter or absolute path - specifically so
 it behaves the same whether Windows puts user profiles on `C:` or `D:`:
 
-- Windows tools: `%USERPROFILE%\.local\bin`, `%USERPROFILE%\.local\opt\<tool>`
-- Linux tools: `~/.local/bin`, `~/.local/share/mise`, `~/.local/opt/<tool>`
 - Config files: `~/.config/<tool>/...` on both OSes (`XDG_CONFIG_HOME` /
   `XDG_DATA_HOME` / `XDG_CACHE_HOME` / `XDG_STATE_HOME` are set under
   `%USERPROFILE%` in `bootstrap.ps1` so Windows resolves the same
   `~/.config/...` paths Linux does by default)
+- Everything else a portable tool needs (downloads, extracted binaries) -
+  see the next section.
 
 PATH changes on Windows are written to the **user** registry hive
 (`HKCU\Environment`) only, never the machine-wide PATH, so no admin session
 is ever required. On Linux, the equivalent is appending to `~/.profile` /
 `~/.bashrc` - both handled by the same `Add-UserPath`/`Set-UserEnvVar`
 helpers in `bootstrap/common.ps1`, branching internally on `$IsWindows`.
+
+## Where downloads and installs land (`bootstrap/paths.env`)
+
+Two locations, both configured in one place - `bootstrap/paths.env` -
+instead of hardcoded per tool:
+
+```
+DOWNLOADS_DIR=.local/downloads   # where downloaded archives are saved
+INSTALL_DIR=.local/opt           # where they get extracted to, one folder per tool
+```
+
+Both are relative to `$HOME`/`%USERPROFILE%`, resolved to absolute paths at
+runtime. In practice:
+
+- **`DOWNLOADS_DIR`** ends up holding the raw `.zip`/`.tar.gz`/self-extracting
+  `.exe` for every portable tool (mise, git, wezterm, pwsh7 itself) exactly
+  as downloaded from GitHub Releases. Files here are **kept, not deleted**
+  after extraction - a re-run that finds the same filename already there
+  skips the download entirely (GitHub release asset names virtually always
+  embed the version, e.g. `mise-v2026.8.11-windows-x64.zip`, so this is a
+  meaningful cache, not just a debugging convenience).
+- **`INSTALL_DIR`** ends up holding one subfolder per tool -
+  `<INSTALL_DIR>/git`, `<INSTALL_DIR>/wezterm`, `<INSTALL_DIR>/mise`,
+  `<INSTALL_DIR>/pwsh7` - each the full extracted contents of that tool's
+  archive. Every install script resolves its executable from inside its
+  own subfolder here (searching for it if the archive nests things, rather
+  than assuming an exact layout) and adds that subfolder to PATH - nothing
+  gets copied out into a separate `bin` directory.
+
+`bootstrap/common.ps1`'s `Get-BootstrapPaths` reads this file and resolves
+both values for every pwsh7 script in the repo (`bootstrap.ps1` and every
+`install.ps1`). The prereq scripts (`prereq.ps1`/`prereq.sh`), which run
+*before* pwsh7 exists, parse the same file by hand with a plain regex
+(PowerShell 5.1) or `grep`/`cut` (bash) - which is exactly why this file is
+plain `KEY=value` text and not YAML or a PowerShell data file: it has to be
+readable by three different runtimes, one of which isn't PowerShell at all.
+
+Two exceptions, both intentional and called out in the scripts themselves:
+- `mise` on Linux is installed by mise's own official installer script
+  (`curl https://mise.run | sh`), which picks its own location
+  (`~/.local/bin/mise`) - not something this repo controls.
+- mise's *own* internal data (installed toolchains, shims) lives under
+  `~/.local/share/mise/...`, mise's own convention, unrelated to
+  `INSTALL_DIR` - only the `mise` binary itself follows this repo's
+  `INSTALL_DIR`/`DOWNLOADS_DIR` convention.
+
+## WezTerm is pinned to nightly (the one exception)
+
+Every other portable tool in this repo installs the latest **stable**
+release. WezTerm is the deliberate exception: `wezterm/install.ps1` always
+fetches the **nightly** build instead, on both Windows and Linux.
+
+This needs different machinery than every other tool here, because
+WezTerm's nightly release isn't a normal versioned release:
+
+- It's tagged `nightly` on GitHub, and marked as a **prerelease** - which
+  means the usual `/releases/latest` API endpoint would never return it
+  (that endpoint explicitly skips prereleases). `Get-LatestGithubAsset`
+  takes an optional `-Tag` parameter for exactly this - only `wezterm`'s
+  install script passes `-Tag "nightly"`; every other call site (`git`,
+  `mise`) is unaffected and still hits `/releases/latest` as before.
+- The same tag gets **overwritten** with a new build continuously, and the
+  asset filenames (`WezTerm-windows-nightly.zip`,
+  `WezTerm-nightly-Ubuntu20.04.AppImage`) never change even though the
+  contents do. That breaks this repo's normal download cache (which skips
+  re-downloading a file it already has by that name, since GitHub release
+  filenames virtually always embed a version) - so `Install-PortableZip`
+  takes an optional `-Force` switch, and only `wezterm/install.ps1` passes
+  it, to always re-download over whatever's cached.
+- Because of the above, `wezterm/install.ps1` also never short-circuits on
+  "already installed" the way every other install script does - it always
+  re-checks and re-installs on every bootstrap run, since staying current
+  is the entire point.
+- On Linux this also means no apt-repo install path, even with sudo
+  available: WezTerm's apt repo only carries stable builds, which would
+  silently defeat "always nightly" for anyone with sudo. The AppImage path
+  is pinned to the Ubuntu 20.04 build specifically for broad
+  forward-compatibility (older-glibc builds generally still run fine on
+  newer distros; the reverse isn't guaranteed) - bump it in
+  `wezterm/install.ps1` if it ever stops working on whatever you're running.
+
+## yazi's `y` shell wrapper (quick `cd` on quit)
+
+`yazi/install.ps1` installs yazi via mise *and* adds the
+[official `y` shell wrapper function](https://yazi-rs.github.io/docs/quick-start#shell-wrapper)
+to your shell profile - Windows: pwsh7's `$PROFILE`; Linux: `~/.bashrc`.
+
+Running `yazi` directly only ever affects yazi's own process: whatever
+directory you end up browsing to, quitting always drops your shell back
+exactly where you started. The `y` function works around that by passing
+`--cwd-file` to yazi, reading back whatever directory you were in when you
+quit, and `cd`-ing your actual shell there - so `y` (instead of `yazi`) is
+the "browse around, then actually land there" version. Use `y` day to day;
+`yazi` still works normally if you specifically don't want the `cd` behavior.
+
+This is written to your profile idempotently: `yazi/install.ps1` wraps the
+function in `# >>> yazi shell wrapper ... >>>` / `# <<< ... <<<` marker
+comments, and a re-run replaces everything between those markers instead
+of appending a duplicate definition - so updating the wrapper's own code
+in `yazi/install.ps1` and re-running the bootstrap correctly updates it in
+your profile too, and anything else already in your profile is left alone.
+
+As with any profile change, open a **new terminal** (or `. $PROFILE` /
+`source ~/.bashrc`) before `y` is available.
+
+## Backing up pre-existing dotfiles
+
+If you already had a real `~/.gitconfig`, `~/.config/nvim`, `~/.config/wezterm/wezterm.lua`,
+or `~/.config/yazi/*` before ever pointing this repo at the machine, `rotz link`
+is about to replace each of those with a symlink into this repo. Before that
+happens, `bootstrap.ps1` (Stage 4/5) moves whatever is *actually there* into
+`BACKUP_DIR` (also configured in `bootstrap/paths.env`, default `~/.local/backup`),
+under a timestamped folder that mirrors the original path:
+
+```
+~/.local/backup/20260824-153000/.gitconfig
+~/.local/backup/20260824-153000/.config/nvim/lua/config
+```
+
+This is driven by `bootstrap/common.ps1`'s `Backup-ExistingLinkTargets`, which:
+
+- Reads every `dot.yaml`'s `links:` block itself (via `Get-DotLinkTargets`,
+  a small parser scoped to the exact shape this repo's `links:` blocks use -
+  not a general YAML parser), so it stays in sync with the repo automatically
+  and there's no separate list of "things to back up" to maintain.
+- Only backs something up if it's a **real** file or folder. If a target is
+  already a symlink/junction (a reparse point) - meaning a previous run of
+  this same repo already linked it - it's left completely alone. This makes
+  the whole thing idempotent: the backup step only ever does something the
+  *first* time a given dotfile gets linked, never on every re-run.
+- Moves (not copies) the original out of the way, which is also what
+  actually frees up the path for `rotz link` to place a symlink there.
+
+**Windows note:** creating real symlinks requires either an admin session or
+Developer Mode enabled (`Settings > Update & Security > For developers`) -
+confirmed while testing this feature, `New-Item -ItemType SymbolicLink`
+fails with "Administrator privilege required" otherwise. Since `config.yaml`
+sets `link_type: Symbolic`, `rotz link` needs one of those two on Windows;
+if it doesn't have either, `rotz link` itself will fail even after the
+backup step succeeds. Enable Developer Mode once per machine if you hit this.
 
 ## Every network call has a timeout
 
