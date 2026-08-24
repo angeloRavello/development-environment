@@ -1,0 +1,8 @@
+global:
+  depends:
+    - /mise
+  installs: mise use --global yazi
+  links:
+    yazi.toml: ~/.config/yazi/yazi.toml
+    keymap.toml: ~/.config/yazi/keymap.toml
+    theme.toml: ~/.config/yazi/theme.toml

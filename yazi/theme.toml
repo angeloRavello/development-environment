@@ -1,0 +1,4 @@
+# Yazi theme - https://yazi-rs.github.io/docs/configuration/theme
+# Empty on purpose: uses yazi's built-in default theme. Drop overrides here,
+# or point [flavor] at a downloaded flavor directory once you pick one from
+# https://yazi-rs.github.io/docs/flavors/

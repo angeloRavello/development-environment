@@ -1,0 +1,3 @@
+depends:
+  - /mise
+installs: pwsh -NoProfile -File "{{ env.DOTFILES }}/java/install.ps1"

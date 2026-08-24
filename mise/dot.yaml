@@ -1,0 +1,1 @@
+installs: pwsh -NoProfile -File "{{ env.DOTFILES }}/mise/install.ps1"

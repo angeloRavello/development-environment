@@ -1,0 +1,12 @@
+[init]
+	defaultBranch = main
+[pull]
+	rebase = false
+[core]
+	autocrlf = input
+	editor = nvim
+[credential]
+	helper = cache --timeout=86400
+[user]
+	# name = Your Name
+	# email = you@example.com

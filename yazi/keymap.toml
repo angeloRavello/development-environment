@@ -1,0 +1,8 @@
+# Yazi keymap - https://yazi-rs.github.io/docs/configuration/keymap
+# Empty on purpose: this file exists so you can override/add keybindings
+# without touching yazi's built-in defaults. Example:
+#
+# [[mgr.prepend_keymap]]
+# on = ["g", "h"]
+# run = "cd ~"
+# desc = "Go home"

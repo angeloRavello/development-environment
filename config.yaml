@@ -1,0 +1,10 @@
+# Repo-level defaults for rotz (https://volllly.github.io/rotz).
+# The machine-local rotz config (normally
+#   Windows: %APPDATA%\rotz\config\config.yaml
+#   Linux:   ~/.config/rotz/config.yaml
+# ) overrides these values. bootstrap/bootstrap.ps1 (invoked via
+# bootstrap/prereq.ps1 or bootstrap/prereq.sh) always passes --dotfiles
+# explicitly too, so this file is mostly documentation + a sane default for
+# anyone who runs `rotz` by hand later.
+global:
+  link_type: Symbolic

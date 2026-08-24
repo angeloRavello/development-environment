@@ -1,0 +1,3 @@
+links:
+  wezterm.lua: ~/.config/wezterm/wezterm.lua
+installs: pwsh -NoProfile -File "{{ env.DOTFILES }}/wezterm/install.ps1"
