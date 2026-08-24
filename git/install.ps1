@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 # Installs git. Runs under pwsh7 on both Windows and Linux.
-#   Windows: portable Git for Windows under ~/.local/opt/git - no admin,
-#            no installer, works whether the profile lives on C: or D:.
+#   Windows: portable Git for Windows under <InstallDir>/git (see
+#            bootstrap/paths.env) - no admin, no installer.
 #   Linux:   apt (sudo) if available; otherwise prints manual instructions -
 #            most Ubuntu images already ship git, so this is usually a no-op.
 $ErrorActionPreference = "Stop"
@@ -13,8 +13,8 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
 }
 
 if ($IsWindows) {
-  $homeDir = $env:USERPROFILE
-  $destDir = "$homeDir/.local/opt/git"
+  $paths = Get-BootstrapPaths
+  $destDir = "$($paths.InstallDir)/git"
   $gitExe = "$destDir/cmd/git.exe"
 
   Write-Host "==> [git] Target executable: $gitExe"
@@ -22,12 +22,17 @@ if ($IsWindows) {
   if (-not (Test-Path $gitExe)) {
     Write-Host "==> [git] Downloading portable Git for Windows"
     $url = Get-LatestGithubAsset -Repo "git-for-windows/git" -Pattern '^PortableGit-.*-64-bit\.7z\.exe$'
-    $sfx = Join-Path $env:TEMP ("PortableGit_" + [guid]::NewGuid().ToString() + ".7z.exe")
-    Write-Host "==> [git] Downloading to $sfx (timeout 300s)"
-    try {
-      Invoke-WebRequest -UseBasicParsing -TimeoutSec 300 -Uri $url -OutFile $sfx
-    } catch {
-      throw "Timed out or failed downloading $url (offline? behind a proxy/firewall?): $($_.Exception.Message)"
+    $sfxFileName = Split-Path -Leaf ([Uri]$url).AbsolutePath
+    $sfx = "$($paths.DownloadsDir)/$sfxFileName"
+    if (Test-Path $sfx) {
+      Write-Host "==> [git] Already downloaded at $sfx - skipping download"
+    } else {
+      Write-Host "==> [git] Downloading to $sfx (timeout 300s)"
+      try {
+        Invoke-WebRequest -UseBasicParsing -TimeoutSec 300 -Uri $url -OutFile $sfx
+      } catch {
+        throw "Timed out or failed downloading $url (offline? behind a proxy/firewall?): $($_.Exception.Message)"
+      }
     }
     New-Item -ItemType Directory -Force -Path $destDir | Out-Null
 
@@ -35,13 +40,15 @@ if ($IsWindows) {
     # space). Guarded with a timeout: a stuck/hung SFX process would
     # otherwise block this script (and rotz install) forever with no
     # visible error.
-    Write-Host "==> [git] Extracting self-extracting archive to $destDir (timeout 120s)"
+    Write-Host ">>> [external] STARTING PortableGit self-extraction  (started $(Get-Date -Format 'HH:mm:ss'), timeout 120s)"
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $proc = Start-Process -FilePath $sfx -ArgumentList "-y", "-o$destDir" -PassThru -WindowStyle Hidden
     if (-not $proc.WaitForExit(120000)) {
       $proc | Stop-Process -Force
       throw "PortableGit self-extraction did not finish within 120s - aborted"
     }
-    Remove-Item $sfx -Force
+    $sw.Stop()
+    Write-Host "<<< [external] FINISHED PortableGit self-extraction  (elapsed $([math]::Round($sw.Elapsed.TotalSeconds, 1))s)"
 
     # Populates cmd\ with the wrapper executables (git.exe, gitk.exe, ...).
     # It also tries a couple of steps that assume the standard "C:\Program
@@ -67,9 +74,8 @@ if ($IsWindows) {
 
   if ($hasSudo) {
     Write-Host "==> [git] Installing via apt-get"
-    & sudo apt-get update -y
-    & sudo apt-get install -y git
-    if ($LASTEXITCODE -ne 0) { throw "apt-get install -y git exited with code $LASTEXITCODE" }
+    Invoke-ExternalCommand -Exe "sudo" -Arguments @("apt-get", "update", "-y") -Label "apt-get update"
+    Invoke-ExternalCommand -Exe "sudo" -Arguments @("apt-get", "install", "-y", "git") -Label "apt-get install git"
   } else {
     Write-Host @"
 [git] git is missing and this account has no sudo access.
