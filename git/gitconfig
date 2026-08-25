@@ -1,5 +1,5 @@
 [init]
-	defaultBranch = main
+	defaultBranch = master
 [pull]
 	rebase = false
 [core]
@@ -8,5 +8,5 @@
 [credential]
 	helper = cache --timeout=86400
 [user]
-	# name = Your Name
-	# email = you@example.com
+	name = Angelo Ravello
+	email = angeloravello26@gmail.com
