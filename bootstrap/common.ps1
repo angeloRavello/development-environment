@@ -1,12 +1,63 @@
-# Shared helpers for bootstrap.ps1 and every dot's install.ps1 in this repo.
-# This file targets pwsh7 (PowerShell Core) and runs unmodified on both
-# Windows and Linux - it uses the $IsWindows/$IsLinux automatic variables,
-# which only exist under pwsh7 (NOT Windows PowerShell 5.1). That's why
-# bootstrap/prereq.ps1 and bootstrap/prereq.sh, which install pwsh7 itself,
-# deliberately do NOT dot-source this file.
+# Shared helpers for bootstrap.ps1 and every tool's install.ps1 in this
+# repo. This file targets pwsh7 (PowerShell Core) and runs unmodified on
+# both Windows and Linux - it uses the $IsWindows/$IsLinux automatic
+# variables, which only exist under pwsh7 (NOT Windows PowerShell 5.1).
+# That's why bootstrap/prereq.ps1 and bootstrap/prereq.sh, which install
+# pwsh7 itself, deliberately do NOT dot-source this file.
 #
 # Everything here installs into the current user's profile only - no
-# admin/sudo required.
+# admin/sudo required. There is no external orchestration tool (rotz or
+# otherwise) anywhere in this repo - bootstrap.ps1 calls every tool's
+# install.ps1 directly, in an explicit, hardcoded order.
+
+# Standard log line format used by every script in this repo:
+#   [yyyy-MM-dd HH:mm:ss.fff] [LEVEL] [tag] message
+# The millisecond timestamp is the point - it's what lets you look at two
+# consecutive lines and see exactly how long the gap between them was,
+# which is the main tool for figuring out where a hang or a slow step is
+# when something goes wrong. Level is one of INFO/WARN/ERROR, padded to a
+# fixed width so lines stay aligned in the terminal.
+function Write-Log {
+  param(
+    [Parameter(Mandatory)][string]$Message,
+    [ValidateSet("INFO", "WARN", "ERROR")][string]$Level = "INFO",
+    [string]$Tag = "common"
+  )
+  $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
+  $paddedLevel = $Level.PadRight(5)
+  Write-Host "[$timestamp] [$paddedLevel] [$Tag] $Message"
+}
+
+# Runs $Action as a named, timed stage: logs when it starts, how long it
+# took, and whether it succeeded or failed - the single mechanism behind
+# every "step" bootstrap.ps1 runs, so every stage is logged exactly the
+# same way with no copy-pasted try/catch boilerplate per call site.
+#
+# -ContinueOnError: log the failure (as ERROR) and return $false instead
+# of throwing. Used for every stage except the ones later stages can't
+# possibly succeed without (mise, git) - those are left to throw and abort
+# the whole bootstrap, since continuing past them would just produce a
+# longer, more confusing cascade of unrelated failures.
+function Invoke-Stage {
+  param(
+    [Parameter(Mandatory)][string]$Name,
+    [Parameter(Mandatory)][scriptblock]$Action,
+    [switch]$ContinueOnError
+  )
+  Write-Log -Tag "bootstrap" -Message "Starting stage: $Name"
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  try {
+    & $Action
+    $sw.Stop()
+    Write-Log -Tag "bootstrap" -Message "Finished stage: $Name (elapsed $([math]::Round($sw.Elapsed.TotalSeconds, 3))s)"
+    return $true
+  } catch {
+    $sw.Stop()
+    Write-Log -Tag "bootstrap" -Level "ERROR" -Message "Stage FAILED: $Name (elapsed $([math]::Round($sw.Elapsed.TotalSeconds, 3))s) - $($_.Exception.Message)"
+    if (-not $ContinueOnError) { throw }
+    return $false
+  }
+}
 
 # Resolves one raw value from paths.env into a final absolute path:
 #   - Already absolute FOR THE CURRENT OS (Windows: "D:\..."/"D:/..." or a
@@ -92,9 +143,9 @@ function Get-BootstrapPaths {
   New-Item -ItemType Directory -Force -Path $installDir | Out-Null
   New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
 
-  Write-Host "    [common] DownloadsDir: $downloadsDir"
-  Write-Host "    [common] InstallDir:   $installDir"
-  Write-Host "    [common] BackupDir:    $backupDir"
+  Write-Log -Message "DownloadsDir: $downloadsDir"
+  Write-Log -Message "InstallDir:   $installDir"
+  Write-Log -Message "BackupDir:    $backupDir"
 
   return [pscustomobject]@{
     DownloadsDir = $downloadsDir
@@ -117,9 +168,9 @@ function Get-LatestGithubAsset {
   )
   $uri = if ($Tag) { "https://api.github.com/repos/$Repo/releases/tags/$Tag" } else { "https://api.github.com/repos/$Repo/releases/latest" }
   $what = if ($Tag) { "tag '$Tag'" } else { "latest release" }
-  Write-Host "    [common] Querying GitHub API for $what of $Repo (timeout ${TimeoutSec}s)"
+  Write-Log -Message "Querying GitHub API for $what of $Repo (timeout ${TimeoutSec}s)"
   try {
-    $release = Invoke-RestMethod -UseBasicParsing -TimeoutSec $TimeoutSec -Uri $uri -Headers @{ "User-Agent" = "rotz-dotfiles-bootstrap" }
+    $release = Invoke-RestMethod -UseBasicParsing -TimeoutSec $TimeoutSec -Uri $uri -Headers @{ "User-Agent" = "dotfiles-bootstrap" }
   } catch {
     throw "Timed out or failed reaching GitHub API for $Repo after ${TimeoutSec}s (offline? behind a proxy/firewall?): $($_.Exception.Message)"
   }
@@ -127,7 +178,7 @@ function Get-LatestGithubAsset {
   if (-not $asset) {
     throw "No release asset matching '$Pattern' found in $what of $Repo"
   }
-  Write-Host "    [common] Resolved asset: $($asset.name)"
+  Write-Log -Message "Resolved asset: $($asset.name)"
   return $asset.browser_download_url
 }
 
@@ -158,14 +209,14 @@ function Install-PortableZip {
   $dest = "$DownloadsDir/$fileName"
 
   if ((Test-Path $dest) -and -not $Force) {
-    Write-Host "    [common] Already downloaded at $dest - skipping download"
+    Write-Log -Message "Already downloaded at $dest - skipping download"
   } else {
     if ($Force -and (Test-Path $dest)) {
-      Write-Host "    [common] -Force set (rolling release) - re-downloading over cached $dest"
+      Write-Log -Message "-Force set (rolling release) - re-downloading over cached $dest"
     } else {
-      Write-Host "    [common] Downloading $Url"
+      Write-Log -Message "Downloading $Url"
     }
-    Write-Host "    [common] -> $dest (timeout ${TimeoutSec}s)"
+    Write-Log -Message "-> $dest (timeout ${TimeoutSec}s)"
     try {
       Invoke-WebRequest -UseBasicParsing -TimeoutSec $TimeoutSec -Uri $Url -OutFile $dest
     } catch {
@@ -174,7 +225,7 @@ function Install-PortableZip {
   }
 
   $size = (Get-Item $dest).Length
-  Write-Host "    [common] $size bytes - extracting to $DestDir"
+  Write-Log -Message "$size bytes - extracting to $DestDir"
   Expand-Archive -Path $dest -DestinationPath $DestDir -Force
 }
 
@@ -200,10 +251,10 @@ function Install-PortableTarGz {
   $dest = "$DownloadsDir/$fileName"
 
   if (Test-Path $dest) {
-    Write-Host "    [common] Already downloaded at $dest - skipping download"
+    Write-Log -Message "Already downloaded at $dest - skipping download"
   } else {
-    Write-Host "    [common] Downloading $Url"
-    Write-Host "    [common] -> $dest (timeout ${TimeoutSec}s)"
+    Write-Log -Message "Downloading $Url"
+    Write-Log -Message "-> $dest (timeout ${TimeoutSec}s)"
     try {
       Invoke-WebRequest -UseBasicParsing -TimeoutSec $TimeoutSec -Uri $Url -OutFile $dest
     } catch {
@@ -212,7 +263,7 @@ function Install-PortableTarGz {
   }
 
   $size = (Get-Item $dest).Length
-  Write-Host "    [common] $size bytes - extracting to $DestDir"
+  Write-Log -Message "$size bytes - extracting to $DestDir"
   & tar -xzf $dest -C $DestDir
   if ($LASTEXITCODE -ne 0) {
     throw "tar exited with code $LASTEXITCODE while extracting $dest"
@@ -226,7 +277,7 @@ function Install-PortableTarGz {
 function Add-UserPath {
   param([Parameter(Mandatory)][string]$Dir)
 
-  Write-Host "    [common] Add-UserPath: $Dir"
+  Write-Log -Message "Add-UserPath: $Dir"
 
   if ($IsWindows) {
     $current = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -235,9 +286,9 @@ function Add-UserPath {
     if (-not ($parts -contains $Dir)) {
       $new = if ($current) { "$current;$Dir" } else { $Dir }
       [Environment]::SetEnvironmentVariable("Path", $new, "User")
-      Write-Host "    [common] -> written to HKCU\Environment\Path"
+      Write-Log -Message "-> written to HKCU\Environment\Path"
     } else {
-      Write-Host "    [common] -> already present in HKCU\Environment\Path"
+      Write-Log -Message "-> already present in HKCU\Environment\Path"
     }
     if (($env:Path -split ";") -notcontains $Dir) {
       $env:Path = "$env:Path;$Dir"
@@ -252,67 +303,18 @@ function Add-UserPath {
       $marker = "PATH=`"`$PATH:$Dir`""
       if (-not (Select-String -Path $rc -Pattern ([regex]::Escape($marker)) -Quiet -ErrorAction SilentlyContinue)) {
         Add-Content -Path $rc -Value "`nexport PATH=`"`$PATH:$Dir`""
-        Write-Host "    [common] -> appended to $rc"
+        Write-Log -Message "-> appended to $rc"
       } else {
-        Write-Host "    [common] -> already present in $rc"
+        Write-Log -Message "-> already present in $rc"
       }
     }
   }
-}
-
-# Extracts every entry under a `links:` block in a dot.yaml as a
-# Source/Target pair, e.g. for:
-#   links:
-#     gitconfig: ~/.gitconfig
-# this returns @([pscustomobject]@{ Source = "<dot folder>/gitconfig"; Target = "~/.gitconfig" }).
-# Source is resolved to an absolute path (the dot.yaml's own folder plus
-# the left-hand value); Target is left with "~" unexpanded - callers
-# resolve that against whichever home directory applies. Handles both a
-# top-level `links:` and one nested under `global:` (this repo uses both
-# styles - see CLAUDE.md) by tracking indentation relative to wherever
-# `links:` itself appears, rather than assuming a fixed indent level.
-#
-# This is NOT a general YAML parser - it only understands the narrow shape
-# every dot.yaml in this repo actually uses (flat `key: value` lines under
-# `links:`, no lists, no quoting). If a future dot.yaml's `links:` block
-# needs something fancier than that, this needs updating too.
-function Get-DotLinks {
-  param([Parameter(Mandatory)][string]$DotYamlPath)
-
-  $dotDir = Split-Path -Parent $DotYamlPath
-  $links = @()
-  $inLinks = $false
-  $linksIndent = 0
-
-  foreach ($line in (Get-Content $DotYamlPath)) {
-    if ($line -match '^(\s*)links:\s*$') {
-      $inLinks = $true
-      $linksIndent = $matches[1].Length
-      continue
-    }
-    if (-not $inLinks) { continue }
-    if ($line -notmatch '\S') { continue }   # blank line - stay in the block
-
-    $indent = ($line -replace '^(\s*).*$', '$1').Length
-    if ($indent -le $linksIndent) {
-      $inLinks = $false
-      continue
-    }
-    if ($line -match '^\s+([^:\s][^:]*):\s*(.+?)\s*$') {
-      $links += [pscustomobject]@{
-        Source = "$dotDir/$($matches[1])"
-        Target = $matches[2]
-      }
-    }
-  }
-
-  return $links
 }
 
 # True if $Source and $Target are files with identical content (compared
 # by hash) or directories whose files all match (same relative paths, same
 # hashes). False if $Target doesn't exist, or differs in any way. Used by
-# Sync-DotLinks to decide whether a link needs (re)deploying at all.
+# Sync-DotLink to decide whether a link needs (re)deploying at all.
 function Test-DotLinkUpToDate {
   param(
     [Parameter(Mandatory)][string]$Source,
@@ -341,18 +343,21 @@ function Test-DotLinkUpToDate {
   return $true
 }
 
-# Deploys every dot.yaml's `links:` by COPYING (not symlinking) source
-# onto target. This repo used to hand this off to `rotz link`, but that
-# needs real symlinks (Symbolic) or same-volume hard links/junctions
-# (Hard) - neither works unconditionally without either enabling Windows
-# Developer Mode (needs admin to turn on) or the dotfiles repo and $HOME
-# living on the same drive, and this repo can't assume either. Copying
-# works everywhere with no admin and across drives, at the cost of losing
-# live sync: editing a tracked file in this repo after Sync-DotLinks has
-# already run needs another bootstrap run (or a manual re-copy) to reach
-# the deployed copy - it's a one-time deploy, not a standing link.
+# Deploys ONE config file/folder by COPYING (not symlinking) $Source onto
+# $Target (accepts "~/..." - expanded against the current OS's home dir).
+# Every tool's install.ps1 calls this directly for whatever config it owns
+# - there's no repo-wide manifest of links to auto-discover, each script
+# just declares its own.
 #
-# For each declared link:
+# Copying, not symlinking: a real symlink needs either Windows Developer
+# Mode (itself needs admin to turn on) or same-volume hard links/junctions
+# (which fail the moment the dotfiles repo and $HOME are on different
+# drives - an ordinary setup, not an edge case). Copying works everywhere
+# with no admin and across drives, at the cost of live sync: editing a
+# tracked file in this repo needs another Sync-DotLink call (i.e. another
+# bootstrap run) to reach the deployed copy.
+#
+# Behavior per call:
 #   - Target missing entirely -> just copy, nothing to back up.
 #   - Target already matches Source (Test-DotLinkUpToDate) -> skip
 #     entirely, so re-running this on an unchanged repo doesn't churn out
@@ -363,82 +368,68 @@ function Test-DotLinkUpToDate {
 #     user's own pre-existing file or a stale previous deploy from before
 #     the repo's tracked version changed), then copy the current source
 #     over it.
-function Sync-DotLinks {
+function Sync-DotLink {
   param(
-    [Parameter(Mandatory)][string]$RepoRoot,
+    [Parameter(Mandatory)][string]$Source,
+    [Parameter(Mandatory)][string]$Target,
     [Parameter(Mandatory)][string]$BackupDir
   )
 
   $homeDir = $null
   if ($IsWindows) { $homeDir = $env:USERPROFILE }
   if ($IsLinux) { $homeDir = $HOME }
-  $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-  $dotYamlFiles = Get-ChildItem -Path $RepoRoot -Recurse -Depth 1 -Filter "dot.yaml" -File
-  $copiedCount = 0
-  $skippedCount = 0
+  $resolvedTarget = if ($Target.StartsWith("~")) { $homeDir + $Target.Substring(1) } else { $Target }
 
-  foreach ($dotYaml in $dotYamlFiles) {
-    foreach ($link in (Get-DotLinks -DotYamlPath $dotYaml.FullName)) {
-      $source = $link.Source
-      $target = $link.Target
-      $resolvedTarget = if ($target.StartsWith("~")) { $homeDir + $target.Substring(1) } else { $target }
-
-      if (-not (Test-Path $source)) {
-        Write-Host "    [common] WARNING: link source $source (from $($dotYaml.FullName)) does not exist - skipping"
-        continue
-      }
-
-      if (Test-DotLinkUpToDate -Source $source -Target $resolvedTarget) {
-        Write-Host "    [common] $resolvedTarget already matches $source - skipping"
-        $skippedCount++
-        continue
-      }
-
-      if (Test-Path $resolvedTarget) {
-        $relative = $resolvedTarget.Substring($homeDir.Length).TrimStart('/', '\')
-        $backupPath = "$BackupDir/$timestamp/$relative"
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $backupPath) | Out-Null
-        Write-Host "    [common] Backing up existing $resolvedTarget -> $backupPath"
-        Move-Item -Path $resolvedTarget -Destination $backupPath -Force
-      }
-
-      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedTarget) | Out-Null
-      Write-Host "    [common] Copying $source -> $resolvedTarget"
-      Copy-Item -Path $source -Destination $resolvedTarget -Recurse -Force
-      $copiedCount++
-    }
+  if (-not (Test-Path $Source)) {
+    Write-Log -Level "WARN" -Message "Sync-DotLink source $Source does not exist - skipping"
+    return
   }
 
-  Write-Host "    [common] Sync-DotLinks: $copiedCount copied, $skippedCount already up to date"
+  if (Test-DotLinkUpToDate -Source $Source -Target $resolvedTarget) {
+    Write-Log -Message "$resolvedTarget already matches $Source - skipping"
+    return
+  }
+
+  if (Test-Path $resolvedTarget) {
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $relative = $resolvedTarget.Substring($homeDir.Length).TrimStart('/', '\')
+    $backupPath = "$BackupDir/$timestamp/$relative"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $backupPath) | Out-Null
+    Write-Log -Message "Backing up existing $resolvedTarget -> $backupPath"
+    Move-Item -Path $resolvedTarget -Destination $backupPath -Force
+  }
+
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedTarget) | Out-Null
+  Write-Log -Message "Copying $Source -> $resolvedTarget"
+  Copy-Item -Path $Source -Destination $resolvedTarget -Recurse -Force
 }
 
-# Runs an external program (mise, rotz, git, apt-get, ...) and prints clear
+# Runs an external program (mise, git, apt-get, ...) and prints clear
 # boundary markers around it, so it's unambiguous in the console where this
-# repo's own diagnostic Write-Host lines end and the program's OWN output
-# begins - and exactly when that program started and finished. The
-# program's stdout/stderr are left completely untouched (not captured, not
-# piped, not prefixed) so its own live progress bars/spinners still render
+# repo's own log lines end and the program's OWN output begins - and
+# exactly when that program started and finished. The program's
+# stdout/stderr are left completely untouched (not captured, not piped,
+# not prefixed) so its own live progress bars/spinners still render
 # correctly; only the >>>/<<< lines around it come from us.
 function Invoke-ExternalCommand {
   param(
     [Parameter(Mandatory)][string]$Exe,
     [string[]]$Arguments = @(),
-    [string]$Label = $Exe   # short human name shown in the banners, e.g. "rotz install"
+    [string]$Label = $Exe   # short human name shown in the banners, e.g. "git clone LazyVim/starter"
   )
 
   $argString = ($Arguments -join " ")
-  Write-Host ">>> [external] STARTING $Label  (started $(Get-Date -Format 'HH:mm:ss'))"
-  Write-Host ">>> [external] command: $Exe $argString"
-  Write-Host ">>> [external] --- everything below, until the matching <<< line, is printed by $Exe itself, not by this repo's scripts ---"
+  Write-Log -Tag "external" -Message "STARTING $Label"
+  Write-Log -Tag "external" -Message "command: $Exe $argString"
+  Write-Log -Tag "external" -Message "--- everything below, until the matching FINISHED line, is printed by $Exe itself, not by this repo's scripts ---"
 
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
   & $Exe @Arguments
   $exitCode = $LASTEXITCODE
   $sw.Stop()
-  $elapsed = "$([math]::Round($sw.Elapsed.TotalSeconds, 1))s"
 
-  Write-Host "<<< [external] --- end of $Exe output ---"
-  Write-Host "<<< [external] FINISHED $Label  (exit code $exitCode, elapsed $elapsed)"
+  Write-Log -Tag "external" -Message "--- end of $Exe output ---"
+  Write-Log -Tag "external" -Message "FINISHED $Label (exit code $exitCode, elapsed $([math]::Round($sw.Elapsed.TotalSeconds, 3))s)"
 
   if ($exitCode -ne 0) {
     throw "$Label exited with code $exitCode"
@@ -454,7 +445,7 @@ function Set-UserEnvVar {
     [Parameter(Mandatory)][string]$Name,
     [Parameter(Mandatory)][string]$Value
   )
-  Write-Host "    [common] Set-UserEnvVar: $Name=$Value"
+  Write-Log -Message "Set-UserEnvVar: $Name=$Value"
 
   if ($IsWindows) {
     [Environment]::SetEnvironmentVariable($Name, $Value, "User")
@@ -469,10 +460,10 @@ function Set-UserEnvVar {
       (Get-Content $rc) | ForEach-Object {
         if ($_ -match "^export $([regex]::Escape($Name))=") { "export $Name=`"$Value`"" } else { $_ }
       } | Set-Content $rc
-      Write-Host "    [common] -> updated existing export in $rc"
+      Write-Log -Message "-> updated existing export in $rc"
     } else {
       Add-Content -Path $rc -Value "`nexport $Name=`"$Value`""
-      Write-Host "    [common] -> appended new export to $rc"
+      Write-Log -Message "-> appended new export to $rc"
     }
   }
   Set-Item -Path "Env:$Name" -Value $Value

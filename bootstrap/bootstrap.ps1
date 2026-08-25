@@ -7,25 +7,33 @@
   isn't already present (nothing else is guaranteed to exist on a fresh
   machine) and then hand off to this script.
 
-  What it does, in order:
-    1. Sets $env:DOTFILES (persisted) and, on Windows only, the XDG_* env
-       vars so tools like neovim/yazi/wezterm resolve config from
-       ~/.config/<tool> the same way they do by default on Linux.
-    2. Installs mise (portable, user-scoped).
-    3. Installs rotz via mise's generic GitHub backend.
-    4. Runs `rotz install --continue-on-error` (executes every dot's install
-       command, which are now all pwsh7 scripts too) - this is also what
-       clones LazyVim into ~/.config/nvim for the neovim dot.
-    5. Deploys every dot.yaml's `links:` via Sync-DotLinks - COPYING each
-       source onto its target (not symlinking - see Sync-DotLinks in
-       common.ps1 for why), backing up whatever real file/folder was
-       already there first if it differs from what's about to be deployed.
-       Runs after install so neovim's LazyVim clone exists before this
-       repo's own overrides get copied on top of it.
+  There is no external orchestration tool involved (no rotz, no dot.yaml
+  manifests) - this script IS the orchestrator. It calls each tool's own
+  install.ps1 directly, in a fixed, explicit order:
 
-  Every stage below prints what it's doing and the key values involved
-  (paths, URLs, versions) so that if this hangs or fails, the last line
-  printed tells you exactly which stage to look at - no more guessing.
+    1. Environment variables ($DOTFILES, and on Windows only, XDG_*).
+    2. mise       - hard dependency: python/rust/zig/java/yazi/neovim all
+                    need it, and everything downstream would just fail
+                    confusingly without it, so this aborts the whole
+                    bootstrap on failure instead of continuing.
+    3. git        - also a hard dependency: neovim's install step needs
+                    `git` on PATH to clone LazyVim.
+    4. wezterm, python, rust, zig, java, yazi, neovim, in that order -
+       "soft" stages: a failure here is logged and the bootstrap keeps
+       going (matching the old `rotz install --continue-on-error`
+       behavior), since none of these block each other. neovim is last
+       because it depends on both mise (Stage 2) and git (Stage 3).
+
+  Every stage is run through Invoke-Stage (bootstrap/common.ps1), which
+  logs a start line, an end line with elapsed time, and - on failure - an
+  ERROR line, all in the same "[yyyy-MM-dd HH:mm:ss.fff] [LEVEL] [tag]
+  message" format every script in this repo uses. That timestamp
+  (millisecond resolution) is what lets you look at the console output
+  after a hang and see exactly which stage was running and how long it
+  had already been running for.
+
+  Each tool's own install.ps1 deploys its own config files (if any) by
+  calling Sync-DotLink directly - there's no separate "link" pass here.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -41,12 +49,14 @@ $HomeDir = $null
 if ($IsWindows) { $HomeDir = $env:USERPROFILE }
 if ($IsLinux) { $HomeDir = $HOME }
 
-Write-Host "==> [bootstrap] Dotfiles repo: $RepoRoot"
-Write-Host "==> [bootstrap] pwsh version: $($PSVersionTable.PSVersion)  IsWindows=$IsWindows  IsLinux=$IsLinux  Home=$HomeDir"
+Write-Log -Tag "bootstrap" -Message "Dotfiles repo: $RepoRoot"
+Write-Log -Tag "bootstrap" -Message "pwsh version: $($PSVersionTable.PSVersion)  IsWindows=$IsWindows  IsLinux=$IsLinux  Home=$HomeDir"
 
-# --- Stage 1/5: DOTFILES + XDG env vars -------------------------------------
-Write-Host "==> [bootstrap] Stage 1/5: environment variables"
-try {
+$bootstrapStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$results = [ordered]@{}
+
+# --- Stage: environment variables (hard - nothing downstream works without $DOTFILES) ---
+Invoke-Stage -Name "environment variables" -Action {
   Set-UserEnvVar -Name "DOTFILES" -Value $RepoRoot
   if ($IsWindows) {
     Set-UserEnvVar -Name "XDG_CONFIG_HOME" -Value (Join-Path $env:USERPROFILE ".config")
@@ -55,96 +65,61 @@ try {
     Set-UserEnvVar -Name "XDG_STATE_HOME"  -Value (Join-Path $env:USERPROFILE ".local\state")
   }
   if ($IsLinux) {
-    Write-Host "    [bootstrap] Linux: leaving XDG_* vars alone (tools default to ~/.config etc. on their own)"
+    Write-Log -Tag "bootstrap" -Message "Linux: leaving XDG_* vars alone (tools default to ~/.config etc. on their own)"
   }
-} catch {
-  Write-Host "!!! [bootstrap] Stage 1/5 (environment variables) FAILED: $($_.Exception.Message)"
-  throw
-}
+} | Out-Null
 
-# --- Stage 2/5: mise ----------------------------------------------------------
-# Note: mise/install.ps1 runs in-process (via `&` on the .ps1 file, not a
-# new OS process) - it's this repo's own script, not a third-party program,
-# so its Write-Host lines are already tagged [mise]/[common] and don't need
-# the >>>/<<< boundary treatment. It internally uses Invoke-ExternalCommand
-# itself wherever it calls a real external program.
-Write-Host "==> [bootstrap] Stage 2/5: installing mise"
-try {
+# --- Stage: mise (HARD dependency - aborts the bootstrap on failure) ---
+Invoke-Stage -Name "mise" -Action {
   & "$RepoRoot/mise/install.ps1"
-} catch {
-  Write-Host "!!! [bootstrap] Stage 2/5 (mise) FAILED: $($_.Exception.Message)"
-  throw
-}
+} | Out-Null
 
-# mise/install.ps1 no longer installs to a fixed path (it extracts into
-# <InstallDir>/mise on Windows - see bootstrap/paths.env - and adds that
-# folder to PATH itself via Add-UserPath), so resolve it dynamically off
-# PATH instead of hardcoding a second guess here that could drift out of
-# sync with wherever mise/install.ps1 actually put it.
 $miseCmd = Get-Command mise -ErrorAction SilentlyContinue
 if (-not $miseCmd) {
   throw "mise did not install correctly - 'mise' not found on PATH after mise/install.ps1 ran"
 }
-$miseExe = $miseCmd.Source
-Write-Host "==> [bootstrap] mise executable: $miseExe"
+Write-Log -Tag "bootstrap" -Message "mise executable: $($miseCmd.Source)"
 
-# --- Stage 3/5: rotz (via mise's generic GitHub backend, no registry entry needed) ---
-Write-Host "==> [bootstrap] Stage 3/5: installing rotz"
-try {
-  Invoke-ExternalCommand -Exe $miseExe -Arguments @("use", "--global", "github:volllly/rotz") -Label "mise use --global github:volllly/rotz (installing rotz)"
-} catch {
-  Write-Host "!!! [bootstrap] Stage 3/5 (rotz) FAILED: $($_.Exception.Message)"
-  throw
+# --- Stage: git (HARD dependency - neovim needs `git` on PATH to clone LazyVim) ---
+Invoke-Stage -Name "git" -Action {
+  & "$RepoRoot/git/install.ps1"
+} | Out-Null
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+  throw "git did not install correctly - 'git' not found on PATH after git/install.ps1 ran"
 }
 
-$shims = "$HomeDir/.local/share/mise/shims"
-Add-UserPath $shims
-$rotzBinName = $null
-if ($IsWindows) { $rotzBinName = "rotz.exe" }
-if ($IsLinux) { $rotzBinName = "rotz" }
-$rotz = "$shims/$rotzBinName"
-Write-Host "==> [bootstrap] rotz executable: $rotz"
-
-if (-not (Test-Path $rotz)) {
-  throw "rotz did not install correctly, expected $rotz"
+# --- Remaining stages: soft dependencies, explicit fixed order, continue past failures ---
+$softStages = [ordered]@{
+  "wezterm" = { & "$RepoRoot/wezterm/install.ps1" }
+  "python"  = { & "$RepoRoot/python/install.ps1" }
+  "rust"    = { & "$RepoRoot/rust/install.ps1" }
+  "zig"     = { & "$RepoRoot/zig/install.ps1" }
+  "java"    = { & "$RepoRoot/java/install.ps1" }
+  "yazi"    = { & "$RepoRoot/yazi/install.ps1" }
+  "neovim"  = { & "$RepoRoot/neovim/install.ps1" }   # last: needs both mise and git
 }
 
-# --- Stage 4/5: rotz install ---------------------------------------------------
-# This is where a hang is most likely: rotz shells out to every dot's own
-# install command (mise installing toolchains, git cloning, apt-get, ...),
-# any of which can stall on a slow/stuck network connection with no timeout
-# of its own. The >>>/<<< boundary at least makes clear when rotz itself
-# started and whether it's still alive vs. truly stuck.
-#
-# Note: this repo no longer calls `rotz link` at all - see Sync-DotLinks
-# below (Stage 5) for why and what replaces it.
-Write-Host "==> [bootstrap] Stage 4/5: rotz install (running each dot's install command, continuing past individual failures)"
-try {
-  Invoke-ExternalCommand -Exe $rotz -Arguments @("--dotfiles", $RepoRoot, "install", "--continue-on-error") -Label "rotz install"
-} catch {
-  Write-Host "!!! [bootstrap] Stage 4/5 (rotz install) FAILED: $($_.Exception.Message)"
-  throw
+foreach ($stageName in $softStages.Keys) {
+  $results[$stageName] = Invoke-Stage -Name $stageName -Action $softStages[$stageName] -ContinueOnError
 }
 
-# --- Stage 5/5: deploy dotfiles by copying (Sync-DotLinks) ---------------------
-# rotz's own `link` command needs either real symlinks (Symbolic - requires
-# Windows Developer Mode, which itself requires admin to turn on) or
-# same-volume hard links/junctions (Hard - fails the moment the dotfiles
-# repo and $HOME live on different drives, e.g. D:\...\development-environment
-# vs C:\Users\...). Neither is guaranteed available, so this repo copies
-# instead: works with no admin and across drives, at the cost of live sync
-# (see Sync-DotLinks in common.ps1 for the full tradeoff). Runs after
-# Stage 4, not before, because neovim's install step clones LazyVim into
-# ~/.config/nvim first - this repo's own config/lua overrides need to land
-# on top of that clone, not before it exists.
-Write-Host "==> [bootstrap] Stage 5/5: deploying dotfiles (copying each dot's links: over any pre-existing file, after backing it up if it differs)"
-try {
-  $paths = Get-BootstrapPaths
-  Sync-DotLinks -RepoRoot $RepoRoot -BackupDir $paths.BackupDir
-} catch {
-  Write-Host "!!! [bootstrap] Stage 5/5 (Sync-DotLinks) FAILED: $($_.Exception.Message)"
-  throw
+$bootstrapStopwatch.Stop()
+
+Write-Log -Tag "bootstrap" -Message ""
+Write-Log -Tag "bootstrap" -Message "===== Summary (total elapsed $([math]::Round($bootstrapStopwatch.Elapsed.TotalSeconds, 3))s) ====="
+$failedStages = @()
+foreach ($stageName in $results.Keys) {
+  $status = "OK"
+  if (-not $results[$stageName]) {
+    $status = "FAILED"
+    $failedStages += $stageName
+  }
+  Write-Log -Tag "bootstrap" -Message "  $stageName : $status"
 }
 
-Write-Host ""
-Write-Host "==> [bootstrap] Done. Open a NEW terminal so the updated PATH/env vars take effect."
+if ($failedStages.Count -gt 0) {
+  Write-Log -Tag "bootstrap" -Level "ERROR" -Message "Done, but $($failedStages.Count) stage(s) failed: $($failedStages -join ', '). Scroll up to the matching 'Stage FAILED' line for each to see why."
+} else {
+  Write-Log -Tag "bootstrap" -Message "Done, all stages succeeded. Open a NEW terminal so the updated PATH/env vars take effect."
+}
