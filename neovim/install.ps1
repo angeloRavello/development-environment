@@ -1,7 +1,7 @@
 #Requires -Version 7.0
-# Installs the neovim binary (via mise) and bootstraps LazyVim into
-# ~/.config/nvim the first time. Runs under pwsh7 on both Windows and
-# Linux. Safe to re-run: it never touches an existing nvim config.
+# Installs the neovim binary (via mise), clones (or updates) LazyVim into
+# ~/.config/nvim, then deploys this repo's own overrides on top. Runs
+# under pwsh7 on both Windows and Linux.
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot/../bootstrap/common.ps1"
 
@@ -13,11 +13,25 @@ if ($IsLinux) { $homeDir = $HOME }
 $xdgConfigHome = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { "$homeDir/.config" }
 $nvimConfig = "$xdgConfigHome/nvim"
 
-Write-Host "==> [neovim] Config target: $nvimConfig"
+Write-Log -Tag "neovim" -Message "Config target: $nvimConfig"
 
-if (Test-Path "$nvimConfig/lua/config/lazy.lua") {
-  Write-Host "==> [neovim] LazyVim starter already present - skipping clone"
+# Keeps .git (unlike earlier versions of this repo, which deleted it right
+# after cloning) specifically so this branch can tell "already cloned" from
+# "needs cloning" AND so a re-run can `git pull` to stay current instead of
+# only ever cloning once and never updating again.
+if (Test-Path "$nvimConfig/.git") {
+  Write-Log -Tag "neovim" -Message "LazyVim starter already present - updating via git pull"
+  Invoke-ExternalCommand -Exe "git" -Arguments @("-C", $nvimConfig, "pull", "--ff-only") -Label "git pull LazyVim/starter"
 } else {
-  Invoke-ExternalCommand -Exe "git" -Arguments @("clone", "--depth", "1", "https://github.com/LazyVim/starter", $nvimConfig) -Label "git clone LazyVim/starter"
-  Remove-Item "$nvimConfig/.git" -Recurse -Force -ErrorAction SilentlyContinue
+  if (Test-Path $nvimConfig) {
+    Write-Log -Tag "neovim" -Level "WARN" -Message "$nvimConfig exists without git metadata (from an older version of this repo, which deleted .git after cloning) - removing and re-cloning fresh so future runs can auto-update"
+    Remove-Item $nvimConfig -Recurse -Force
+  } else {
+    Write-Log -Tag "neovim" -Message "Cloning LazyVim starter into $nvimConfig"
+  }
+  Invoke-ExternalCommand -Exe "git" -Arguments @("clone", "https://github.com/LazyVim/starter", $nvimConfig) -Label "git clone LazyVim/starter"
 }
+
+$paths = Get-BootstrapPaths
+Sync-DotLink -Source "$PSScriptRoot/config/lua/config" -Target "$nvimConfig/lua/config" -BackupDir $paths.BackupDir
+Sync-DotLink -Source "$PSScriptRoot/config/lua/plugins" -Target "$nvimConfig/lua/plugins" -BackupDir $paths.BackupDir

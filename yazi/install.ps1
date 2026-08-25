@@ -1,5 +1,6 @@
 #Requires -Version 7.0
-# Installs yazi (via mise) and the official "y" shell wrapper function -
+# Installs yazi (via mise), deploys its config files, and installs the
+# official "y" shell wrapper function -
 # https://yazi-rs.github.io/docs/quick-start#shell-wrapper - so that
 # running `y` (instead of `yazi`) launches the file manager and, when you
 # quit it, actually changes your shell's current directory to wherever you
@@ -7,10 +8,14 @@
 # process - quitting always drops you back exactly where you started, no
 # matter how far you browsed. Runs under pwsh7 on both Windows and Linux.
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot/../bootstrap/common.ps1"
 
-Write-Host "==> [yazi] mise use --global yazi"
-& mise use --global yazi
-if ($LASTEXITCODE -ne 0) { throw "mise use --global yazi exited with code $LASTEXITCODE" }
+Invoke-ExternalCommand -Exe "mise" -Arguments @("use", "--global", "yazi") -Label "mise use --global yazi"
+
+$paths = Get-BootstrapPaths
+Sync-DotLink -Source "$PSScriptRoot/yazi.toml" -Target "~/.config/yazi/yazi.toml" -BackupDir $paths.BackupDir
+Sync-DotLink -Source "$PSScriptRoot/keymap.toml" -Target "~/.config/yazi/keymap.toml" -BackupDir $paths.BackupDir
+Sync-DotLink -Source "$PSScriptRoot/theme.toml" -Target "~/.config/yazi/theme.toml" -BackupDir $paths.BackupDir
 
 # Idempotently writes $Content between two marker comment lines in
 # $ProfilePath: if the markers are already there (from a previous run),
@@ -36,12 +41,12 @@ function Set-ManagedBlock {
   $block = @($BeginMarker) + $Content + @($EndMarker)
 
   if ($beginIdx -ge 0 -and $endIdx -gt $beginIdx) {
-    Write-Host "    [yazi] Updating existing managed block in $ProfilePath"
+    Write-Log -Tag "yazi" -Message "Updating existing managed block in $ProfilePath"
     $before = if ($beginIdx -gt 0) { $existing[0..($beginIdx - 1)] } else { @() }
     $after = if ($endIdx -lt $existing.Count - 1) { $existing[($endIdx + 1)..($existing.Count - 1)] } else { @() }
     @($before + $block + $after) | Set-Content -Path $ProfilePath
   } else {
-    Write-Host "    [yazi] Appending managed block to $ProfilePath"
+    Write-Log -Tag "yazi" -Message "Appending managed block to $ProfilePath"
     Add-Content -Path $ProfilePath -Value ""
     Add-Content -Path $ProfilePath -Value $block
   }
@@ -55,7 +60,7 @@ if ($IsWindows) {
   # Windows PowerShell 5.1's (different, separate file). That's
   # deliberate: everything past bootstrap/prereq.ps1 in this repo assumes
   # pwsh7 is the shell you actually use day to day.
-  Write-Host "==> [yazi] Installing 'y' wrapper into pwsh profile: $PROFILE"
+  Write-Log -Tag "yazi" -Message "Installing 'y' wrapper into pwsh profile: $PROFILE"
   $pwshWrapper = @(
     'function y {',
     '  $tmp = [System.IO.Path]::GetTempFileName()',
@@ -71,7 +76,7 @@ if ($IsWindows) {
 }
 if ($IsLinux) {
   $bashrc = "$HOME/.bashrc"
-  Write-Host "==> [yazi] Installing 'y' wrapper into $bashrc"
+  Write-Log -Tag "yazi" -Message "Installing 'y' wrapper into $bashrc"
   $bashWrapper = @(
     'function y() {',
     '  local tmp="$(mktemp -t "yazi-cwd.XXXXXX")"',
@@ -85,4 +90,4 @@ if ($IsLinux) {
   Set-ManagedBlock -ProfilePath $bashrc -BeginMarker $beginMarker -EndMarker $endMarker -Content $bashWrapper
 }
 
-Write-Host "==> [yazi] Done. Open a NEW terminal (or reload your profile) for the 'y' command to be available."
+Write-Log -Tag "yazi" -Message "Done. Open a NEW terminal (or reload your profile) for the 'y' command to be available."

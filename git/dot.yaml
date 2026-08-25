@@ -1,3 +1,0 @@
-links:
-  gitconfig: ~/.gitconfig
-installs: pwsh -NoProfile -File "{{ env.DOTFILES }}/git/install.ps1"

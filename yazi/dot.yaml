@@ -1,7 +1,0 @@
-depends:
-  - /mise
-links:
-  yazi.toml: ~/.config/yazi/yazi.toml
-  keymap.toml: ~/.config/yazi/keymap.toml
-  theme.toml: ~/.config/yazi/theme.toml
-installs: pwsh -NoProfile -File "{{ env.DOTFILES }}/yazi/install.ps1"

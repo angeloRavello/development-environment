@@ -1,3 +1,0 @@
-depends:
-  - /mise
-installs: mise use --global zig

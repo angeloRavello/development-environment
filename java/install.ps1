@@ -17,8 +17,8 @@ $ErrorActionPreference = "Stop"
 $versions = @("temurin-8", "temurin-11", "temurin-17", "temurin-21", "temurin-25")
 $default = "temurin-25"
 
-Write-Host "==> [java] Versions to ensure installed: $($versions -join ', ')"
-Write-Host "==> [java] Global default will be: $default"
+Write-Log -Tag "java" -Message "Versions to ensure installed: $($versions -join ', ')"
+Write-Log -Tag "java" -Message "Global default will be: $default"
 
 foreach ($v in $versions) {
   Invoke-ExternalCommand -Exe "mise" -Arguments @("install", "java@$v") -Label "mise install java@$v"
@@ -26,5 +26,5 @@ foreach ($v in $versions) {
 
 Invoke-ExternalCommand -Exe "mise" -Arguments @("use", "--global", "java@$default") -Label "mise use --global java@$default"
 
-Write-Host "==> [java] Verifying default version"
+Write-Log -Tag "java" -Message "Verifying default version"
 & mise exec "java@$default" -- java -version

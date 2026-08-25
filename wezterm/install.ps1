@@ -32,7 +32,7 @@ $destDir = "$($paths.InstallDir)/wezterm"
 
 if ($IsWindows) {
   $exe = "$destDir/wezterm.exe"
-  Write-Host "==> [wezterm] Installing nightly build to $destDir"
+  Write-Log -Tag "wezterm" -Message "Installing nightly build to $destDir"
   $url = Get-LatestGithubAsset -Repo "wezterm/wezterm" -Tag "nightly" -Pattern '^WezTerm-windows-nightly\.zip$'
   Install-PortableZip -Url $url -DestDir $destDir -DownloadsDir $paths.DownloadsDir -Force
 
@@ -42,25 +42,25 @@ if ($IsWindows) {
     $found = Get-ChildItem -Path $destDir -Recurse -Filter "wezterm.exe" | Select-Object -First 1
     if (-not $found) { throw "wezterm.exe not found after extracting WezTerm nightly zip (searched $destDir)" }
     $inner = $found.Directory
-    Write-Host "==> [wezterm] Flattening nested folder $($inner.FullName) into $destDir"
+    Write-Log -Tag "wezterm" -Message "Flattening nested folder $($inner.FullName) into $destDir"
     Get-ChildItem -Path $inner.FullName | Move-Item -Destination $destDir -Force
     if ($inner.FullName -ne $destDir) { Remove-Item $inner.FullName -Recurse -Force }
   }
 
   Add-UserPath $destDir
-  Write-Host "==> [wezterm] Verifying installation"
+  Write-Log -Tag "wezterm" -Message "Verifying installation"
   & $exe --version
 }
 if ($IsLinux) {
   New-Item -ItemType Directory -Force -Path $destDir | Out-Null
   $appImage = "$destDir/wezterm.AppImage"
-  Write-Host "==> [wezterm] Installing nightly AppImage to $destDir"
+  Write-Log -Tag "wezterm" -Message "Installing nightly AppImage to $destDir"
   # Pinned to the Ubuntu 20.04 build for broad compatibility: an AppImage
   # linked against an older glibc generally still runs fine on newer
   # distros (glibc is backward-compatible), which isn't true the other way
   # around. Bump this if it ever stops working on whatever you're running.
   $url = Get-LatestGithubAsset -Repo "wezterm/wezterm" -Tag "nightly" -Pattern '^WezTerm-nightly-Ubuntu20\.04\.AppImage$'
-  Write-Host "==> [wezterm] Downloading to $appImage (timeout 300s, always re-fetched)"
+  Write-Log -Tag "wezterm" -Message "Downloading to $appImage (timeout 300s, always re-fetched)"
   try {
     Invoke-WebRequest -UseBasicParsing -TimeoutSec 300 -Uri $url -OutFile $appImage
   } catch {
@@ -70,6 +70,8 @@ if ($IsLinux) {
   & ln -sf $appImage "$destDir/wezterm"
   Add-UserPath $destDir
 
-  Write-Host "==> [wezterm] Verifying installation"
+  Write-Log -Tag "wezterm" -Message "Verifying installation"
   & "$destDir/wezterm" --version
 }
+
+Sync-DotLink -Source "$PSScriptRoot/wezterm.lua" -Target "~/.config/wezterm/wezterm.lua" -BackupDir $paths.BackupDir

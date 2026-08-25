@@ -1,6 +1,0 @@
-depends:
-  - /mise
-links:
-  config/lua/config: ~/.config/nvim/lua/config
-  config/lua/plugins: ~/.config/nvim/lua/plugins
-installs: pwsh -NoProfile -File "{{ env.DOTFILES }}/neovim/install.ps1"
