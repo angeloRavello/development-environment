@@ -17,7 +17,7 @@ tool - see "Why PowerShell 7 for everything" below for why.
 | `git` | portable download, no admin | `PortableGit-*-64-bit.7z.exe` from git-for-windows | `apt` (sudo) or manual if no sudo |
 | `mise` | portable zip / official installer | `mise-*-windows-x64.zip` | `curl https://mise.run \| sh` |
 | `python`, `rust`, `zig` | `mise use --global <tool>` | via mise | via mise |
-| `java` | `mise install` OpenJDK 8, 11, 21 and 25 side-by-side; 25 set as `mise use --global` default | via mise | via mise |
+| `java` | `mise install` Eclipse Temurin 8, 11, 17, 21 and 25 side-by-side; 25 set as `mise use --global` default | via mise | via mise |
 | `yazi` | `mise use --global yazi` + config + `y` shell wrapper (see below) | via mise | via mise |
 | `neovim` + `LazyVim` | `mise use --global neovim` + clone [LazyVim/starter](https://github.com/LazyVim/starter) | via mise | via mise |
 | `wezterm` | portable download, **always nightly** (see below) | `WezTerm-windows-nightly.zip` | portable `.AppImage`, nightly (no apt, no sudo) |
