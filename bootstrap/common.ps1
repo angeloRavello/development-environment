@@ -260,23 +260,27 @@ function Add-UserPath {
   }
 }
 
-# Extracts the target (right-hand) side of every entry under a `links:`
-# block in a dot.yaml, e.g. for:
+# Extracts every entry under a `links:` block in a dot.yaml as a
+# Source/Target pair, e.g. for:
 #   links:
 #     gitconfig: ~/.gitconfig
-# this returns @("~/.gitconfig"). Handles both a top-level `links:` and one
-# nested under `global:` (this repo uses both styles - see CLAUDE.md) by
-# tracking indentation relative to wherever `links:` itself appears, rather
-# than assuming a fixed indent level.
+# this returns @([pscustomobject]@{ Source = "<dot folder>/gitconfig"; Target = "~/.gitconfig" }).
+# Source is resolved to an absolute path (the dot.yaml's own folder plus
+# the left-hand value); Target is left with "~" unexpanded - callers
+# resolve that against whichever home directory applies. Handles both a
+# top-level `links:` and one nested under `global:` (this repo uses both
+# styles - see CLAUDE.md) by tracking indentation relative to wherever
+# `links:` itself appears, rather than assuming a fixed indent level.
 #
 # This is NOT a general YAML parser - it only understands the narrow shape
 # every dot.yaml in this repo actually uses (flat `key: value` lines under
 # `links:`, no lists, no quoting). If a future dot.yaml's `links:` block
 # needs something fancier than that, this needs updating too.
-function Get-DotLinkTargets {
+function Get-DotLinks {
   param([Parameter(Mandatory)][string]$DotYamlPath)
 
-  $targets = @()
+  $dotDir = Split-Path -Parent $DotYamlPath
+  $links = @()
   $inLinks = $false
   $linksIndent = 0
 
@@ -294,22 +298,72 @@ function Get-DotLinkTargets {
       $inLinks = $false
       continue
     }
-    if ($line -match '^\s+[^:\s][^:]*:\s*(.+?)\s*$') {
-      $targets += $matches[1]
+    if ($line -match '^\s+([^:\s][^:]*):\s*(.+?)\s*$') {
+      $links += [pscustomobject]@{
+        Source = "$dotDir/$($matches[1])"
+        Target = $matches[2]
+      }
     }
   }
 
-  return $targets
+  return $links
 }
 
-# Before `rotz link` overwrites a target with a symlink, this moves
-# whatever is CURRENTLY there into <BackupDir>/<timestamp>/<same relative
-# path under home> - but only if it's a real file/folder, not already a
-# symlink (which almost certainly means a previous run of this same repo
-# already linked it, so there's nothing of the user's to lose). Reads every
-# dot.yaml's `links:` block via Get-DotLinkTargets so this stays in sync
-# with the repo automatically - no separate list of targets to maintain.
-function Backup-ExistingLinkTargets {
+# True if $Source and $Target are files with identical content (compared
+# by hash) or directories whose files all match (same relative paths, same
+# hashes). False if $Target doesn't exist, or differs in any way. Used by
+# Sync-DotLinks to decide whether a link needs (re)deploying at all.
+function Test-DotLinkUpToDate {
+  param(
+    [Parameter(Mandatory)][string]$Source,
+    [Parameter(Mandatory)][string]$Target
+  )
+  if (-not (Test-Path $Target)) { return $false }
+
+  $sourceIsDir = (Get-Item $Source).PSIsContainer
+  $targetIsDir = (Get-Item $Target).PSIsContainer
+  if ($sourceIsDir -ne $targetIsDir) { return $false }
+
+  if (-not $sourceIsDir) {
+    return (Get-FileHash $Source).Hash -eq (Get-FileHash $Target).Hash
+  }
+
+  $sourceFiles = @(Get-ChildItem -Path $Source -Recurse -File)
+  $targetFiles = @(Get-ChildItem -Path $Target -Recurse -File)
+  if ($sourceFiles.Count -ne $targetFiles.Count) { return $false }
+
+  foreach ($sf in $sourceFiles) {
+    $relative = $sf.FullName.Substring($Source.Length).TrimStart('\', '/')
+    $tf = Join-Path $Target $relative
+    if (-not (Test-Path $tf)) { return $false }
+    if ((Get-FileHash $sf.FullName).Hash -ne (Get-FileHash $tf).Hash) { return $false }
+  }
+  return $true
+}
+
+# Deploys every dot.yaml's `links:` by COPYING (not symlinking) source
+# onto target. This repo used to hand this off to `rotz link`, but that
+# needs real symlinks (Symbolic) or same-volume hard links/junctions
+# (Hard) - neither works unconditionally without either enabling Windows
+# Developer Mode (needs admin to turn on) or the dotfiles repo and $HOME
+# living on the same drive, and this repo can't assume either. Copying
+# works everywhere with no admin and across drives, at the cost of losing
+# live sync: editing a tracked file in this repo after Sync-DotLinks has
+# already run needs another bootstrap run (or a manual re-copy) to reach
+# the deployed copy - it's a one-time deploy, not a standing link.
+#
+# For each declared link:
+#   - Target missing entirely -> just copy, nothing to back up.
+#   - Target already matches Source (Test-DotLinkUpToDate) -> skip
+#     entirely, so re-running this on an unchanged repo doesn't churn out
+#     a fresh backup and a fresh copy every single time.
+#   - Target exists and differs -> back it up to
+#     <BackupDir>/<timestamp>/<same relative path under home> first (never
+#     silently discard whatever was actually there, whether that's the
+#     user's own pre-existing file or a stale previous deploy from before
+#     the repo's tracked version changed), then copy the current source
+#     over it.
+function Sync-DotLinks {
   param(
     [Parameter(Mandatory)][string]$RepoRoot,
     [Parameter(Mandatory)][string]$BackupDir
@@ -320,36 +374,42 @@ function Backup-ExistingLinkTargets {
   if ($IsLinux) { $homeDir = $HOME }
   $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
   $dotYamlFiles = Get-ChildItem -Path $RepoRoot -Recurse -Depth 1 -Filter "dot.yaml" -File
-  $backedUpCount = 0
+  $copiedCount = 0
+  $skippedCount = 0
 
   foreach ($dotYaml in $dotYamlFiles) {
-    foreach ($target in (Get-DotLinkTargets -DotYamlPath $dotYaml.FullName)) {
+    foreach ($link in (Get-DotLinks -DotYamlPath $dotYaml.FullName)) {
+      $source = $link.Source
+      $target = $link.Target
       $resolvedTarget = if ($target.StartsWith("~")) { $homeDir + $target.Substring(1) } else { $target }
 
-      if (-not (Test-Path $resolvedTarget)) { continue }
-
-      $item = Get-Item -Path $resolvedTarget -Force
-      $isSymlink = [bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
-      if ($isSymlink) {
-        Write-Host "    [common] $resolvedTarget is already a symlink - nothing to back up"
+      if (-not (Test-Path $source)) {
+        Write-Host "    [common] WARNING: link source $source (from $($dotYaml.FullName)) does not exist - skipping"
         continue
       }
 
-      $relative = $resolvedTarget.Substring($homeDir.Length).TrimStart('/', '\')
-      $backupPath = "$BackupDir/$timestamp/$relative"
-      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $backupPath) | Out-Null
+      if (Test-DotLinkUpToDate -Source $source -Target $resolvedTarget) {
+        Write-Host "    [common] $resolvedTarget already matches $source - skipping"
+        $skippedCount++
+        continue
+      }
 
-      Write-Host "    [common] Backing up existing $resolvedTarget -> $backupPath"
-      Move-Item -Path $resolvedTarget -Destination $backupPath -Force
-      $backedUpCount++
+      if (Test-Path $resolvedTarget) {
+        $relative = $resolvedTarget.Substring($homeDir.Length).TrimStart('/', '\')
+        $backupPath = "$BackupDir/$timestamp/$relative"
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $backupPath) | Out-Null
+        Write-Host "    [common] Backing up existing $resolvedTarget -> $backupPath"
+        Move-Item -Path $resolvedTarget -Destination $backupPath -Force
+      }
+
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedTarget) | Out-Null
+      Write-Host "    [common] Copying $source -> $resolvedTarget"
+      Copy-Item -Path $source -Destination $resolvedTarget -Recurse -Force
+      $copiedCount++
     }
   }
 
-  if ($backedUpCount -gt 0) {
-    Write-Host "    [common] Backed up $backedUpCount pre-existing config(s) under $BackupDir/$timestamp"
-  } else {
-    Write-Host "    [common] No pre-existing configs found that needed backing up"
-  }
+  Write-Host "    [common] Sync-DotLinks: $copiedCount copied, $skippedCount already up to date"
 }
 
 # Runs an external program (mise, rotz, git, apt-get, ...) and prints clear

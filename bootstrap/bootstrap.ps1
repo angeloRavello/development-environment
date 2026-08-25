@@ -13,14 +13,15 @@
        ~/.config/<tool> the same way they do by default on Linux.
     2. Installs mise (portable, user-scoped).
     3. Installs rotz via mise's generic GitHub backend.
-    4. Backs up any pre-existing real file/folder at a spot a dot.yaml is
-       about to symlink over (e.g. an existing ~/.gitconfig from before
-       this repo was ever used here) into bootstrap/paths.env's BACKUP_DIR,
-       timestamped - so `rotz link` never silently clobbers something you
-       already had.
-    5. Runs `rotz install --continue-on-error` (executes every dot's install
-       command, which are now all pwsh7 scripts too) then `rotz link`
-       (symlinks every dot's config files).
+    4. Runs `rotz install --continue-on-error` (executes every dot's install
+       command, which are now all pwsh7 scripts too) - this is also what
+       clones LazyVim into ~/.config/nvim for the neovim dot.
+    5. Deploys every dot.yaml's `links:` via Sync-DotLinks - COPYING each
+       source onto its target (not symlinking - see Sync-DotLinks in
+       common.ps1 for why), backing up whatever real file/folder was
+       already there first if it differs from what's about to be deployed.
+       Runs after install so neovim's LazyVim clone exists before this
+       repo's own overrides get copied on top of it.
 
   Every stage below prints what it's doing and the key values involved
   (paths, URLs, versions) so that if this hangs or fails, the last line
@@ -108,47 +109,40 @@ if (-not (Test-Path $rotz)) {
   throw "rotz did not install correctly, expected $rotz"
 }
 
-# --- Stage 4/5: back up any pre-existing dotfiles before they get symlinked over ---
-# If you already had a real ~/.gitconfig, ~/.config/nvim, etc. before ever
-# running this repo, `rotz link` is about to replace it with a symlink.
-# This moves whatever's really there into BACKUP_DIR (bootstrap/paths.env)
-# first - it's a no-op on a machine that's already fully linked, since
-# anything already a symlink is skipped.
-Write-Host "==> [bootstrap] Stage 4/5: backing up pre-existing dotfiles"
-try {
-  $paths = Get-BootstrapPaths
-  Backup-ExistingLinkTargets -RepoRoot $RepoRoot -BackupDir $paths.BackupDir
-} catch {
-  Write-Host "!!! [bootstrap] Stage 4/5 (backup) FAILED: $($_.Exception.Message)"
-  throw
-}
-
-# --- Stage 5/5: rotz install + link -------------------------------------------
+# --- Stage 4/5: rotz install ---------------------------------------------------
 # This is where a hang is most likely: rotz shells out to every dot's own
 # install command (mise installing toolchains, git cloning, apt-get, ...),
 # any of which can stall on a slow/stuck network connection with no timeout
 # of its own. The >>>/<<< boundary at least makes clear when rotz itself
 # started and whether it's still alive vs. truly stuck.
-Write-Host "==> [bootstrap] Stage 5/5: rotz install (running each dot's install command, continuing past individual failures)"
+#
+# Note: this repo no longer calls `rotz link` at all - see Sync-DotLinks
+# below (Stage 5) for why and what replaces it.
+Write-Host "==> [bootstrap] Stage 4/5: rotz install (running each dot's install command, continuing past individual failures)"
 try {
   Invoke-ExternalCommand -Exe $rotz -Arguments @("--dotfiles", $RepoRoot, "install", "--continue-on-error") -Label "rotz install"
 } catch {
-  Write-Host "!!! [bootstrap] Stage 5/5 (rotz install) FAILED: $($_.Exception.Message)"
+  Write-Host "!!! [bootstrap] Stage 4/5 (rotz install) FAILED: $($_.Exception.Message)"
   throw
 }
 
-Write-Host "==> [bootstrap] Stage 5/5: rotz link (symlinking config files)"
+# --- Stage 5/5: deploy dotfiles by copying (Sync-DotLinks) ---------------------
+# rotz's own `link` command needs either real symlinks (Symbolic - requires
+# Windows Developer Mode, which itself requires admin to turn on) or
+# same-volume hard links/junctions (Hard - fails the moment the dotfiles
+# repo and $HOME live on different drives, e.g. D:\...\development-environment
+# vs C:\Users\...). Neither is guaranteed available, so this repo copies
+# instead: works with no admin and across drives, at the cost of live sync
+# (see Sync-DotLinks in common.ps1 for the full tradeoff). Runs after
+# Stage 4, not before, because neovim's install step clones LazyVim into
+# ~/.config/nvim first - this repo's own config/lua overrides need to land
+# on top of that clone, not before it exists.
+Write-Host "==> [bootstrap] Stage 5/5: deploying dotfiles (copying each dot's links: over any pre-existing file, after backing it up if it differs)"
 try {
-  # --force: "force link creation if file already exists and was not
-  # created by rotz". Backup-ExistingLinkTargets above already clears every
-  # target it knows about, so in the normal case there's nothing left for
-  # rotz to force past - this is a safety net for anything that step's
-  # narrow dot.yaml parser (Get-DotLinkTargets) might miss, so a future
-  # link this repo doesn't yet know how to parse still gets created
-  # instead of rotz silently skipping it.
-  Invoke-ExternalCommand -Exe $rotz -Arguments @("--dotfiles", $RepoRoot, "link", "--force") -Label "rotz link"
+  $paths = Get-BootstrapPaths
+  Sync-DotLinks -RepoRoot $RepoRoot -BackupDir $paths.BackupDir
 } catch {
-  Write-Host "!!! [bootstrap] Stage 5/5 (rotz link) FAILED: $($_.Exception.Message)"
+  Write-Host "!!! [bootstrap] Stage 5/5 (Sync-DotLinks) FAILED: $($_.Exception.Message)"
   throw
 }
 

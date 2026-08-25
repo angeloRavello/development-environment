@@ -73,11 +73,12 @@ last line printed tells you exactly which stage to look at.
    3. Installs `rotz` itself through mise's generic GitHub backend
       (`mise use --global github:volllly/rotz` - rotz has no mise registry
       entry, but does publish standard target-triple release zips).
-   4. Backs up any pre-existing real dotfile a `dot.yaml` is about to
-      symlink over (see "Backing up pre-existing dotfiles" below).
-   5. Runs `rotz install --continue-on-error` (executes every dot's
-      install command - now always `pwsh -NoProfile -File <tool>/install.ps1`)
-      then `rotz link` (symlinks every dot's config files).
+   4. Runs `rotz install --continue-on-error` (executes every dot's
+      install command - now always `pwsh -NoProfile -File <tool>/install.ps1`).
+   5. Deploys every dot.yaml's `links:` by *copying* (not symlinking - see
+      "Deploying dotfiles" below) each source over its target, backing up
+      whatever real file was already there first if it differs from what's
+      about to be deployed.
 
 Open a **new terminal** afterwards so PATH/env var changes take effect.
 
@@ -254,41 +255,67 @@ your profile too, and anything else already in your profile is left alone.
 As with any profile change, open a **new terminal** (or `. $PROFILE` /
 `source ~/.bashrc`) before `y` is available.
 
-## Backing up pre-existing dotfiles
+## Deploying dotfiles: copied, not symlinked
 
-If you already had a real `~/.gitconfig`, `~/.config/nvim`, `~/.config/wezterm/wezterm.lua`,
-or `~/.config/yazi/*` before ever pointing this repo at the machine, `rotz link`
-is about to replace each of those with a symlink into this repo. Before that
-happens, `bootstrap.ps1` (Stage 4/5) moves whatever is *actually there* into
-`BACKUP_DIR` (also configured in `bootstrap/paths.env`, default `~/.local/backup`),
-under a timestamped folder that mirrors the original path:
+`bootstrap.ps1` never calls `rotz link`. Every `dot.yaml`'s `links:` gets
+deployed by `bootstrap/common.ps1`'s `Sync-DotLinks`, which **copies**
+each source onto its target instead of symlinking it.
+
+**Why not `rotz link`:** rotz only supports two link types (confirmed by
+reading its source, `src/config.rs`/`src/commands/link.rs` - there's no
+"copy" mode built in):
+- `Symbolic` needs Windows Developer Mode enabled, which itself needs an
+  admin session to turn on (`New-Item -ItemType SymbolicLink` fails with
+  "Administrator privilege required" otherwise, confirmed while building
+  this) - not guaranteed available, and this repo can't require it.
+- `Hard` uses real hard links for files and NTFS junctions for directories
+  on Windows. Junctions work fine across drives with no admin - but hard
+  links for files **do not**: `New-Item -ItemType HardLink` fails with "The
+  system cannot move the file to a different disk drive" the moment the
+  dotfiles repo and `$HOME` are on different drives (e.g. `D:\...\development-environment`
+  vs `C:\Users\...`), which is a completely ordinary setup this repo has
+  to support, not an edge case.
+
+Copying has neither problem - no admin, works across drives - at one real
+cost: **no live sync**. A symlink means editing a tracked file in this
+repo immediately shows up at the deployed path; a copy is a snapshot from
+whenever `Sync-DotLinks` last ran. Edit something in this repo and you
+need another bootstrap run (or `Sync-DotLinks` by hand) for the change to
+reach `~/.gitconfig` etc.
+
+`Sync-DotLinks` still protects whatever was already at a target before
+deploying over it - same spirit as the symlink-based approach it replaced,
+just re-triggered by content instead of by presence:
+
+- **Target doesn't exist** - just copy, nothing to lose.
+- **Target already matches the source** (compared by file hash; a whole
+  directory tree if the link is a folder, like neovim's `config/lua/config`)
+  - skip entirely. This is what keeps re-running the bootstrap on an
+  unchanged repo cheap and quiet instead of re-backing-up and re-copying
+  everything every single time.
+- **Target exists and differs** - move it to
+  `BACKUP_DIR/<timestamp>/<same relative path under home>` (`BACKUP_DIR`
+  is configured in `bootstrap/paths.env`, default `~/.local/backup`) first,
+  *then* copy the current source over it. This also means: if you edit a
+  tracked file in this repo and re-run the bootstrap, the previously
+  deployed version gets backed up before being replaced by the new one -
+  nothing this repo deploys is ever silently overwritten without a copy of
+  what was there before.
 
 ```
 ~/.local/backup/20260824-153000/.gitconfig
 ~/.local/backup/20260824-153000/.config/nvim/lua/config
 ```
 
-This is driven by `bootstrap/common.ps1`'s `Backup-ExistingLinkTargets`, which:
+`Get-DotLinks` (also in `common.ps1`) is the parser behind this - reads
+every `dot.yaml`'s `links:` block as Source/Target pairs (a small parser
+scoped to the exact shape this repo's `links:` blocks use, not a general
+YAML parser), so `Sync-DotLinks` stays in sync with the repo automatically
+and there's no separate list of "things to deploy" to maintain.
 
-- Reads every `dot.yaml`'s `links:` block itself (via `Get-DotLinkTargets`,
-  a small parser scoped to the exact shape this repo's `links:` blocks use -
-  not a general YAML parser), so it stays in sync with the repo automatically
-  and there's no separate list of "things to back up" to maintain.
-- Only backs something up if it's a **real** file or folder. If a target is
-  already a symlink/junction (a reparse point) - meaning a previous run of
-  this same repo already linked it - it's left completely alone. This makes
-  the whole thing idempotent: the backup step only ever does something the
-  *first* time a given dotfile gets linked, never on every re-run.
-- Moves (not copies) the original out of the way, which is also what
-  actually frees up the path for `rotz link` to place a symlink there.
-
-**Windows note:** creating real symlinks requires either an admin session or
-Developer Mode enabled (`Settings > Update & Security > For developers`) -
-confirmed while testing this feature, `New-Item -ItemType SymbolicLink`
-fails with "Administrator privilege required" otherwise. Since `config.yaml`
-sets `link_type: Symbolic`, `rotz link` needs one of those two on Windows;
-if it doesn't have either, `rotz link` itself will fail even after the
-backup step succeeds. Enable Developer Mode once per machine if you hit this.
+`config.yaml`'s `link_type: Symbolic` setting is no longer read by this
+repo's own bootstrap flow - it's left in place only for anyone who runs
+`rotz link` by hand outside of `bootstrap.ps1`.
 
 ## Every network call has a timeout
 
@@ -304,8 +331,9 @@ repo used to do before these guards were added.
 ## Repo layout
 
 Each top-level folder is a rotz "dot": a `dot.yaml` describing how to
-install the tool (`installs`) and where its config files get symlinked
-(`links`), plus the actual config files. See
+install the tool (`installs`) and where its config files get deployed
+(`links` - copied into place by `Sync-DotLinks`, not symlinked by rotz
+itself - see "Deploying dotfiles" above), plus the actual config files. See
 [rotz's config reference](https://volllly.github.io/rotz/docs/configuration)
 for the full schema. A couple of things learned by testing against the real
 `rotz` binary while building this repo, that aren't obvious from the docs:
@@ -338,8 +366,9 @@ starter template, someone else's config repo, a plugin manager bundle,
 3. If you also want to layer your *own* overrides on top of the cloned
    repo (like this repo does with `neovim/config/lua/config` and
    `lua/plugins`), add a `links` section in `dot.yaml` for just those
-   subfolders/files, keyed after the install step so the clone exists
-   first (`rotz install` runs before `rotz link` for exactly this reason).
+   subfolders/files. `Sync-DotLinks` (Stage 5) always runs after `rotz
+   install` (Stage 4) for exactly this reason - the clone needs to exist
+   before this repo's own overrides get copied on top of it.
 
 ## Gotchas
 

@@ -6,5 +6,13 @@
 # bootstrap/prereq.ps1 or bootstrap/prereq.sh) always passes --dotfiles
 # explicitly too, so this file is mostly documentation + a sane default for
 # anyone who runs `rotz` by hand later.
+#
+# link_type is NOT used by this repo's own bootstrap flow anymore -
+# bootstrap.ps1 never calls `rotz link` (see Sync-DotLinks in
+# bootstrap/common.ps1). Symbolic needs Windows Developer Mode (itself
+# needs admin to enable) and Hard needs the dotfiles repo and $HOME on the
+# same drive, neither of which this repo can assume, so dotfiles get
+# copied into place instead of linked. This setting only still matters if
+# you run `rotz link` by hand yourself outside of bootstrap.ps1.
 global:
   link_type: Symbolic

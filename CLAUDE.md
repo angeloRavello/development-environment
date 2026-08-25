@@ -18,7 +18,7 @@ The one place this doesn't apply: `bootstrap/prereq.ps1` (Windows, runs under th
 
 ## Repo layout: rotz "dots"
 
-Each top-level folder (`git`, `mise`, `python`, `java`, `rust`, `zig`, `yazi`, `neovim`, `wezterm`) is a rotz "dot": a `dot.yaml` describing how to install the tool (`installs`) and where its config files get symlinked (`links`), plus the actual config files for that tool. Full schema: rotz's [config reference](https://volllly.github.io/rotz/docs/configuration). `powershell7` is **not** a dot anymore — see above, it's handled by the prereq step before rotz exists.
+Each top-level folder (`git`, `mise`, `python`, `java`, `rust`, `zig`, `yazi`, `neovim`, `wezterm`) is a rotz "dot": a `dot.yaml` describing how to install the tool (`installs`) and where its config files get deployed (`links` - copied into place by `Sync-DotLinks`, not symlinked by rotz - see below), plus the actual config files for that tool. Full schema: rotz's [config reference](https://volllly.github.io/rotz/docs/configuration). `powershell7` is **not** a dot anymore — see above, it's handled by the prereq step before rotz exists.
 
 `dot.yaml` schema rules learned by testing against the real `rotz` binary (not obvious from the docs):
 - You can't mix a bare top-level `links`/`installs`/`depends` with the OS-scoped `global`/`windows`/`linux` keys in the same file — it's one schema or the other. This repo no longer needs the OS-scoped keys at all, since every `installs:` is now a single `pwsh -NoProfile -File "{{ env.DOTFILES }}/<tool>/install.ps1"` command that works unmodified on both OSes — every `dot.yaml` uses the flat top-level schema.
@@ -29,16 +29,16 @@ Each top-level folder (`git`, `mise`, `python`, `java`, `rust`, `zig`, `yazi`, `
 
 1. **`bootstrap/prereq.ps1`/`prereq.sh`** — installs pwsh7 if missing, then hands off to `bootstrap.ps1` running under pwsh7.
 2. **`bootstrap/bootstrap.ps1`** (pwsh7, both OSes):
-   1. Resolves this repo's path and persists it as `$env:DOTFILES` (so plain `rotz install`/`rotz link` keep working in later sessions) via `Set-UserEnvVar`.
+   1. Resolves this repo's path and persists it as `$env:DOTFILES` (so plain `rotz install` keeps working in later sessions) via `Set-UserEnvVar`.
    2. On Windows only: sets `XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`XDG_CACHE_HOME`/`XDG_STATE_HOME` under `%USERPROFILE%` so tools resolve config the same way Linux does by default.
    3. Installs `mise` (portable, user-scoped) via `mise/install.ps1`.
    4. Installs `rotz` itself through mise's generic GitHub backend (`mise use --global github:volllly/rotz`) — rotz has no mise registry entry but does publish standard target-triple release zips.
-   5. Backs up any pre-existing real dotfile a `dot.yaml` is about to symlink over, via `Backup-ExistingLinkTargets` (see below).
-   6. Runs `rotz install --continue-on-error` (executes every dot's install command), then `rotz link` (symlinks every dot's config files). Install always runs before link — dots like `neovim` depend on their clone step existing before overrides get linked on top.
+   5. Runs `rotz install --continue-on-error` (executes every dot's install command - this is also what clones LazyVim for the neovim dot).
+   6. Deploys every dot.yaml's `links:` via `Sync-DotLinks` (see below) — always *after* `rotz install`, since dots like `neovim` depend on their clone step existing before this repo's own overrides get copied on top.
 
 Every stage prints `==> [stage] ...` plus the key values involved (resolved paths, download URLs, versions) specifically so a hang or failure can be pinpointed from console output alone — this was added after the previous two-dialect scripts hung silently with no indication of where.
 
-`bootstrap/common.ps1` holds shared helpers (`Get-BootstrapPaths`, `Get-LatestGithubAsset`, `Install-PortableZip`, `Install-PortableTarGz`, `Add-UserPath`, `Set-UserEnvVar`, `Invoke-ExternalCommand`, `Get-DotLinkTargets`, `Backup-ExistingLinkTargets`) used by `bootstrap.ps1` and every per-tool `install.ps1`. `Add-UserPath`/`Set-UserEnvVar` branch internally on `$IsWindows` (registry `HKCU\Environment`) vs. Linux (`~/.profile`/`~/.bashrc`, idempotent append).
+`bootstrap/common.ps1` holds shared helpers (`Get-BootstrapPaths`, `Get-LatestGithubAsset`, `Install-PortableZip`, `Install-PortableTarGz`, `Add-UserPath`, `Set-UserEnvVar`, `Invoke-ExternalCommand`, `Get-DotLinks`, `Test-DotLinkUpToDate`, `Sync-DotLinks`) used by `bootstrap.ps1` and every per-tool `install.ps1`. `Add-UserPath`/`Set-UserEnvVar` branch internally on `$IsWindows` (registry `HKCU\Environment`) vs. Linux (`~/.profile`/`~/.bashrc`, idempotent append).
 
 ## Where downloads and installs land: `bootstrap/paths.env`
 
@@ -57,15 +57,23 @@ Two exceptions to `INSTALL_DIR`, both called out in comments at their call sites
 
 Because mise's own binary no longer lives at a fixed path (Windows: wherever it lands under `<INSTALL_DIR>/mise`, dynamically discovered), `bootstrap.ps1` resolves `$miseExe` via `Get-Command mise` after `mise/install.ps1` runs (which already added the right folder to the current session's PATH) instead of hardcoding a second guess that could drift out of sync.
 
-## Backing up pre-existing dotfiles before `rotz link` overwrites them
+## Dotfiles are deployed by copying, not by `rotz link` — do not reintroduce symlinking
 
-`bootstrap.ps1` Stage 4/5 calls `Backup-ExistingLinkTargets -RepoRoot $RepoRoot -BackupDir $paths.BackupDir` (paths from `Get-BootstrapPaths`, `BACKUP_DIR` in `paths.env`, default `~/.local/backup`) before Stage 5/5 runs `rotz link`. This exists because a machine can already have a real `~/.gitconfig`/`~/.config/nvim`/etc. from before this repo was ever used there, and `rotz link` would otherwise silently replace it.
+`bootstrap.ps1` never calls `rotz link`. Stage 5/5 (last stage) calls `Sync-DotLinks -RepoRoot $RepoRoot -BackupDir $paths.BackupDir` instead (paths from `Get-BootstrapPaths`, `BACKUP_DIR` in `paths.env`, default `~/.local/backup`).
 
-`Backup-ExistingLinkTargets` (in `common.ps1`) drives itself off the repo's own `dot.yaml` files rather than a separately maintained list:
-- `Get-DotLinkTargets` extracts every target (right-hand side) under a `links:` block by tracking indentation relative to wherever `links:` itself appears — every `dot.yaml` in this repo now uses the flat top-level `links:` style, but the indentation-relative approach would handle a nested-under-`global:` style too if one ever came back. **This is a narrow parser scoped to the exact shape this repo's `links:` blocks use, not a general YAML parser** — no lists, no quoting, flat `key: value` lines only. If a `links:` block ever needs something fancier, this parser needs updating too.
-- For each resolved target: skip if it doesn't exist; skip (leave alone) if it's already a reparse point (`Attributes -band [System.IO.FileAttributes]::ReparsePoint`) — that covers both symlinks and junctions, and means a prior run of this repo already linked it, so there's nothing of the user's to lose; otherwise `Move-Item` it to `<BackupDir>/<timestamp>/<same relative path under home>`, which also vacates the path for `rotz link` to place a symlink there. This makes the whole thing idempotent — the backup step only ever moves something on the *first* run that links a given dotfile, never on repeat runs.
+**Why, precisely — confirmed by reading rotz's own source (`src/config.rs`, `src/commands/link.rs`), not assumed:** rotz's `LinkType` enum has exactly two variants, `Symbolic` and `Hard` — no copy mode exists in rotz at all. Neither variant is safe to assume available on this repo's target machines:
+- `Symbolic` needs `SeCreateSymbolicLinkPrivilege`, granted by Windows Developer Mode — which itself needs an admin session to enable. `New-Item -ItemType SymbolicLink` was confirmed failing with "Administrator privilege required for this operation" on a real machine without it.
+- `Hard` uses real hard links for files and NTFS junctions for directories on Windows (per rotz's source). Junctions cross drives fine with no admin (confirmed: `New-Item -ItemType Junction` from `D:\...` to `C:\Users\...` succeeded). Hard links for **files** do not: confirmed failing with "The system cannot move the file to a different disk drive" the moment source and target are on different volumes — completely normal here, since the dotfiles repo living on a different drive than `%USERPROFILE%` is an ordinary setup this repo has to support, not an edge case.
 
-**Windows note, confirmed while building/testing this:** `New-Item -ItemType SymbolicLink` fails with "Administrator privilege required for this operation" without admin or Developer Mode enabled. `config.yaml` sets `link_type: Symbolic`, so `rotz link` itself needs one of those two on Windows — this is a pre-existing constraint of rotz's symlink mode, not something `Backup-ExistingLinkTargets` introduces, but it means `rotz link` can still fail *after* the backup step succeeds if Developer Mode isn't on. (The smoke test for this function used a `Junction` instead of a real symlink for exactly this reason — junctions don't require elevation and are also reparse points, so they exercise the same detection path.)
+Copying avoids both failure modes (no admin, works across drives) at a real cost: **no live sync**. A symlink means an edit to a tracked file in this repo is immediately visible at the deployed path; a copy is a snapshot from whenever `Sync-DotLinks` last ran, and needs a re-run to pick up further edits. **Do not "fix" this by switching back to `rotz link` or `link_type: Hard`** without re-solving the admin/cross-drive problem first — that's the whole reason this mechanism exists.
+
+`Sync-DotLinks` (in `common.ps1`) drives itself off the repo's own `dot.yaml` files rather than a separately maintained list, via two other functions also in `common.ps1`:
+- `Get-DotLinks` extracts every `links:` entry as a `{ Source, Target }` pair (Source resolved to an absolute path under the dot's own folder; Target left with `~` unexpanded) by tracking indentation relative to wherever `links:` itself appears. **This is a narrow parser scoped to the exact shape this repo's `links:` blocks use, not a general YAML parser** — no lists, no quoting, flat `key: value` lines only. If a `links:` block ever needs something fancier, this parser needs updating too.
+- `Test-DotLinkUpToDate` compares Source and (resolved) Target by content hash — a single file hash for file links, a full recursive per-file hash comparison for directory links (e.g. neovim's `config/lua/config`) — to decide whether a link needs redeploying at all.
+
+For each link, `Sync-DotLinks` has three outcomes: if Target **doesn't exist**, it copies with nothing to back up; if Target **already matches Source** (`Test-DotLinkUpToDate`), it skips entirely — this is what keeps re-running the bootstrap on an unchanged repo cheap and quiet instead of re-backing-up and re-copying everything on every single run; if Target **exists and differs**, it `Move-Item`s it to `<BackupDir>/<timestamp>/<same relative path under home>` first, then `Copy-Item -Recurse -Force`s Source over the now-clear path. Verified with an isolated fixture covering all of: new file (plain copy), differing pre-existing file (backup then copy, content of both verified), a nested directory tree (mirrors neovim's shape), unchanged re-run (zero new backups), and a changed repo source on a second run (the previously-deployed version gets backed up before the new one lands).
+
+`config.yaml`'s `link_type: Symbolic` is no longer read by this repo's bootstrap flow at all — left in place only for documentation/anyone running `rotz link` by hand.
 
 ## yazi's `y` shell wrapper
 
@@ -108,11 +116,11 @@ Pattern already used by `neovim/install.ps1` for cloning LazyVim — generalize 
 
 1. Create `<tool>/dot.yaml` with `installs: pwsh -NoProfile -File "{{ env.DOTFILES }}/<tool>/install.ps1"`.
 2. In that script: install the binary (mise if registered, otherwise a portable download like `git`/`wezterm`, with `$IsWindows`/`$IsLinux` branches only where the OSes genuinely differ), then `git clone` the config repo into its real target location **only if it isn't already there** — idempotency, never clobber a working setup on re-runs.
-3. To layer your own overrides on top of the cloned repo (as this repo does with `neovim/config/lua/config` and `lua/plugins`), add a `links` section in `dot.yaml` for just those subfolders/files, keyed after the install step so the clone exists first.
+3. To layer your own overrides on top of the cloned repo (as this repo does with `neovim/config/lua/config` and `lua/plugins`), add a `links` section in `dot.yaml` for just those subfolders/files — `Sync-DotLinks` always runs after `rotz install` for exactly this reason, so the clone exists before the overrides get copied on top.
 
 ## Gotchas
 
 - **Never commit a tracked `mise/config.toml` at the repo root.** `mise` recognizes `mise/config.toml` (relative to cwd) as one of its own local-project config file names, so a repo-tracked one makes every `mise` invocation from inside this repo prompt to "trust" and load it as a project config. It was removed for this reason. Tool versions are pinned instead by each dot running `mise use --global <tool>`, which writes straight to mise's real global config (`~/.config/mise/config.toml`) — no repo-tracked mise config needed.
 - `git/gitconfig` ships without `user.name`/`user.email` — these must be set per-machine (`git config --global user.name "..."`) or by editing the linked file directly, not baked into the repo.
-- `config.yaml` at the repo root is rotz's own default config (`link_type: Symbolic`); it's mostly documentation since `bootstrap.ps1` always passes `--dotfiles` explicitly to rotz.
+- `config.yaml` at the repo root is rotz's own default config (`link_type: Symbolic`); it's mostly documentation — `bootstrap.ps1` always passes `--dotfiles` explicitly to rotz, and never calls `rotz link` at all (see "Dotfiles are deployed by copying" above), so `link_type` only matters if you run `rotz link` by hand.
 - `mise/install.ps1` shells out to `bash -c "curl ... | sh"` on Linux for mise's own official installer — this is the one intentional exception to "everything is pwsh", since it's the vendor-documented install method, not custom logic worth reimplementing.
