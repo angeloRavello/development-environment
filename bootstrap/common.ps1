@@ -34,7 +34,8 @@ function Resolve-ConfiguredPath {
     if ($looksLinuxAbsolute) {
       throw "$KeyName is set to '$Value', which looks like a Linux absolute path, but this is Windows. Set ${KeyName}_WINDOWS in bootstrap/paths.env to a Windows path (e.g. D:\tools\...) instead."
     }
-  } else {
+  }
+  if ($IsLinux) {
     if ($looksLinuxAbsolute) { return $Value }
     if ($looksWindowsAbsolute) {
       throw "$KeyName is set to '$Value', which looks like a Windows absolute path, but this is Linux. Set ${KeyName}_LINUX in bootstrap/paths.env to a Linux path (e.g. /opt/tools/...) instead."
@@ -58,7 +59,9 @@ function Resolve-ConfiguredPath {
 # absolute path for the current OS, or a relative fragment joined with
 # home - see Resolve-ConfiguredPath above).
 function Get-BootstrapPaths {
-  $homeDir = if ($IsWindows) { $env:USERPROFILE } else { $HOME }
+  $homeDir = $null
+  if ($IsWindows) { $homeDir = $env:USERPROFILE }
+  if ($IsLinux) { $homeDir = $HOME }
   $configPath = "$PSScriptRoot/paths.env"
 
   if (-not (Test-Path $configPath)) {
@@ -74,7 +77,9 @@ function Get-BootstrapPaths {
     if (-not $raw.ContainsKey($key)) { throw "$configPath is missing required key $key" }
   }
 
-  $osSuffix = if ($IsWindows) { "_WINDOWS" } else { "_LINUX" }
+  $osSuffix = $null
+  if ($IsWindows) { $osSuffix = "_WINDOWS" }
+  if ($IsLinux) { $osSuffix = "_LINUX" }
   $downloadsRaw = if ($raw.ContainsKey("DOWNLOADS_DIR$osSuffix")) { $raw["DOWNLOADS_DIR$osSuffix"] } else { $raw['DOWNLOADS_DIR'] }
   $installRaw = if ($raw.ContainsKey("INSTALL_DIR$osSuffix")) { $raw["INSTALL_DIR$osSuffix"] } else { $raw['INSTALL_DIR'] }
   $backupRaw = if ($raw.ContainsKey("BACKUP_DIR$osSuffix")) { $raw["BACKUP_DIR$osSuffix"] } else { $raw['BACKUP_DIR'] }
@@ -237,7 +242,8 @@ function Add-UserPath {
     if (($env:Path -split ";") -notcontains $Dir) {
       $env:Path = "$env:Path;$Dir"
     }
-  } else {
+  }
+  if ($IsLinux) {
     if (($env:Path -split ":") -notcontains $Dir) {
       $env:Path = "$env:Path`:$Dir"
     }
@@ -309,7 +315,9 @@ function Backup-ExistingLinkTargets {
     [Parameter(Mandatory)][string]$BackupDir
   )
 
-  $homeDir = if ($IsWindows) { $env:USERPROFILE } else { $HOME }
+  $homeDir = $null
+  if ($IsWindows) { $homeDir = $env:USERPROFILE }
+  if ($IsLinux) { $homeDir = $HOME }
   $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
   $dotYamlFiles = Get-ChildItem -Path $RepoRoot -Recurse -Depth 1 -Filter "dot.yaml" -File
   $backedUpCount = 0
@@ -390,7 +398,8 @@ function Set-UserEnvVar {
 
   if ($IsWindows) {
     [Environment]::SetEnvironmentVariable($Name, $Value, "User")
-  } else {
+  }
+  if ($IsLinux) {
     $rc = "$HOME/.profile"
     if (-not (Test-Path $rc)) { New-Item -ItemType File -Path $rc -Force | Out-Null }
     $marker = "export $Name="

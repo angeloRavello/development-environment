@@ -50,7 +50,8 @@ if ($IsWindows) {
   Add-UserPath $destDir
   Write-Host "==> [wezterm] Verifying installation"
   & $exe --version
-} else {
+}
+if ($IsLinux) {
   New-Item -ItemType Directory -Force -Path $destDir | Out-Null
   $appImage = "$destDir/wezterm.AppImage"
   Write-Host "==> [wezterm] Installing nightly AppImage to $destDir"

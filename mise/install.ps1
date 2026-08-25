@@ -9,8 +9,13 @@
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot/../bootstrap/common.ps1"
 
-$homeDir = if ($IsWindows) { $env:USERPROFILE } else { $HOME }
-$miseBinName = if ($IsWindows) { "mise.exe" } else { "mise" }
+$homeDir = $null
+if ($IsWindows) { $homeDir = $env:USERPROFILE }
+if ($IsLinux) { $homeDir = $HOME }
+
+$miseBinName = $null
+if ($IsWindows) { $miseBinName = "mise.exe" }
+if ($IsLinux) { $miseBinName = "mise" }
 
 if ($IsWindows) {
   $paths = Get-BootstrapPaths
@@ -34,7 +39,8 @@ if ($IsWindows) {
   }
 
   Add-UserPath (Split-Path -Parent $exe)
-} else {
+}
+if ($IsLinux) {
   $exe = "$homeDir/.local/bin/$miseBinName"
   Write-Host "==> [mise] Target executable: $exe"
 

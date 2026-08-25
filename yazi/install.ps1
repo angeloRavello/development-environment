@@ -68,7 +68,8 @@ if ($IsWindows) {
     '}'
   )
   Set-ManagedBlock -ProfilePath $PROFILE -BeginMarker $beginMarker -EndMarker $endMarker -Content $pwshWrapper
-} else {
+}
+if ($IsLinux) {
   $bashrc = "$HOME/.bashrc"
   Write-Host "==> [yazi] Installing 'y' wrapper into $bashrc"
   $bashWrapper = @(

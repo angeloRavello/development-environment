@@ -65,7 +65,8 @@ if ($IsWindows) {
   Add-UserPath "$destDir/cmd"
   Write-Host "==> [git] Verifying installation"
   & $gitExe --version
-} else {
+}
+if ($IsLinux) {
   Write-Host "==> [git] Not found on PATH - checking for sudo"
   & sudo -n true 2>$null
   $sudoNonInteractive = ($LASTEXITCODE -eq 0)

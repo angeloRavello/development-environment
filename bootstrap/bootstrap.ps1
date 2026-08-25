@@ -36,7 +36,9 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 . "$PSScriptRoot/common.ps1"
 
 $RepoRoot = (Resolve-Path "$PSScriptRoot/..").Path
-$HomeDir = if ($IsWindows) { $env:USERPROFILE } else { $HOME }
+$HomeDir = $null
+if ($IsWindows) { $HomeDir = $env:USERPROFILE }
+if ($IsLinux) { $HomeDir = $HOME }
 
 Write-Host "==> [bootstrap] Dotfiles repo: $RepoRoot"
 Write-Host "==> [bootstrap] pwsh version: $($PSVersionTable.PSVersion)  IsWindows=$IsWindows  IsLinux=$IsLinux  Home=$HomeDir"
@@ -50,7 +52,8 @@ try {
     Set-UserEnvVar -Name "XDG_DATA_HOME"   -Value (Join-Path $env:USERPROFILE ".local\share")
     Set-UserEnvVar -Name "XDG_CACHE_HOME"  -Value (Join-Path $env:USERPROFILE ".cache")
     Set-UserEnvVar -Name "XDG_STATE_HOME"  -Value (Join-Path $env:USERPROFILE ".local\state")
-  } else {
+  }
+  if ($IsLinux) {
     Write-Host "    [bootstrap] Linux: leaving XDG_* vars alone (tools default to ~/.config etc. on their own)"
   }
 } catch {
@@ -95,7 +98,9 @@ try {
 
 $shims = "$HomeDir/.local/share/mise/shims"
 Add-UserPath $shims
-$rotzBinName = if ($IsWindows) { "rotz.exe" } else { "rotz" }
+$rotzBinName = $null
+if ($IsWindows) { $rotzBinName = "rotz.exe" }
+if ($IsLinux) { $rotzBinName = "rotz" }
 $rotz = "$shims/$rotzBinName"
 Write-Host "==> [bootstrap] rotz executable: $rotz"
 
