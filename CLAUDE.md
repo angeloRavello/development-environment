@@ -4,123 +4,126 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A dotfiles + machine-bootstrap repo managed with [rotz](https://volllly.github.io/rotz/docs/getting-started). One command sets up a brand new Windows 11 or Ubuntu/Linux machine with a fixed set of dev tools, without ever requiring an administrator/root account.
+A dotfiles + machine-bootstrap repo. One command sets up a brand new Windows 11 or Ubuntu/Linux machine with a fixed set of dev tools, without ever requiring an administrator/root account.
 
-There is no build, lint, or test suite — this is configuration, not application code. "Testing" a change means running the relevant bootstrap script (or a single dot's `install.ps1`) on a real or scratch machine/VM and confirming the tool installs and configs get linked.
+There is no build, lint, or test suite — this is configuration, not application code. "Testing" a change means running the relevant bootstrap script (or a single tool's `install.ps1`) on a real or scratch machine/VM and confirming the tool installs and configs get deployed. When you can't run a real bootstrap, at minimum parse-check every touched `.ps1` (`[System.Management.Automation.Language.Parser]::ParseFile`) and, where feasible, exercise the changed function against an isolated fixture (temp dir standing in for `$HOME`/the repo) rather than the real environment — this repo's history includes several bugs (a bash `case` backslash-escaping bug, a broken `--force` re-download flag) that were only caught by actually running the code, not by reading it.
 
-## Single-language architecture: pwsh7 everywhere, except the prerequisite step
+## No external orchestration tool — this repo used to use rotz, and no longer does
 
-Every script in this repo past the very first step is PowerShell 7 (`pwsh`), and runs unmodified on both Windows and Linux — there is no more `install.ps1`/`install.sh` pair per tool. This repo used to duplicate every fix across two shell dialects (a real problem: a timeout fix landed in one and had to be manually ported to the other); pwsh7 was chosen over introducing a new language (e.g. Python) because it already runs natively on Linux and this repo was already installing it as a tool.
+Every script here is PowerShell 7 (`pwsh`), including the orchestration itself: `bootstrap/bootstrap.ps1` calls each tool's `install.ps1` directly, in a fixed, explicit, hardcoded order — there is no dependency-manifest file (no `dot.yaml`, no `config.yaml`) and no generic dependency resolver.
 
-The one place this doesn't apply: `bootstrap/prereq.ps1` (Windows, runs under the stock PowerShell 5.1 that ships with the OS) and `bootstrap/prereq.sh` (Linux, plain bash). Their only job is installing pwsh7 itself (portable, no admin/sudo) before anything else can run — since nothing else is guaranteed to exist on a truly fresh machine. This is the one deliberately duplicated block in the repo; both files are self-contained (they do **not** dot-source `common.ps1`, since that file uses `$IsWindows`/`$IsLinux`, which only exist under pwsh7, not Windows PowerShell 5.1). Once pwsh7 is present, the prereq script hands off to `bootstrap/bootstrap.ps1` and never runs again.
+This repo previously used [rotz](https://volllly.github.io/rotz) (a Rust dotfile manager) for both installing tools and linking their config files, with a `dot.yaml` per tool. It was removed for two reasons, in this order:
+1. **`rotz link` couldn't reliably deploy config files on this repo's actual target machines.** Confirmed by reading rotz's own source (`src/config.rs`, `src/commands/link.rs`): only two `LinkType` variants exist, `Symbolic` and `Hard` — no copy mode. `Symbolic` needs Windows Developer Mode, which needs admin to enable (reproduced: `rotz link` failed with "A required privilege is not held by the client (os error 1314)"). `Hard` fails outright for **file** links the moment the dotfiles repo and `$HOME` are on different drives (confirmed: `New-Item -ItemType HardLink` across `D:\...` → `C:\Users\...` fails with "The system cannot move the file to a different disk drive") — an ordinary setup, not an edge case, since nothing in this repo can assume the dotfiles clone lives on the same drive as the user profile. This is why config deployment is copy-based now — see "Deploying dotfiles" below.
+2. Once `link` needed replacing with custom code anyway, `install` was the only thing rotz still did, and that reduces to "run one command per tool, in dependency order" — which this repo now just does directly and explicitly in `bootstrap.ps1`, instead of paying for a generic `depends:`-driven resolver (plus its own bootstrap cost — installing rotz itself was a whole stage) to get the same fixed order every run anyway.
 
-`bootstrap.ps1` itself starts with `#Requires -Version 7.0` and an explicit version check that throws a clear error if somehow invoked under 5.1 directly — always go through `prereq.ps1`/`prereq.sh`.
+**If you're tempted to reintroduce rotz, `dot.yaml`, or `rotz link`/`link_type: Hard`: don't, without first re-solving the admin/cross-drive problem above.** That problem is the entire reason this architecture exists.
 
-## Repo layout: rotz "dots"
+## Repo layout
 
-Each top-level folder (`git`, `mise`, `python`, `java`, `rust`, `zig`, `yazi`, `neovim`, `wezterm`) is a rotz "dot": a `dot.yaml` describing how to install the tool (`installs`) and where its config files get deployed (`links` - copied into place by `Sync-DotLinks`, not symlinked by rotz - see below), plus the actual config files for that tool. Full schema: rotz's [config reference](https://volllly.github.io/rotz/docs/configuration). `powershell7` is **not** a dot anymore — see above, it's handled by the prereq step before rotz exists.
-
-`dot.yaml` schema rules learned by testing against the real `rotz` binary (not obvious from the docs):
-- You can't mix a bare top-level `links`/`installs`/`depends` with the OS-scoped `global`/`windows`/`linux` keys in the same file — it's one schema or the other. This repo no longer needs the OS-scoped keys at all, since every `installs:` is now a single `pwsh -NoProfile -File "{{ env.DOTFILES }}/<tool>/install.ps1"` command that works unmodified on both OSes — every `dot.yaml` uses the flat top-level schema.
-- `depends` entries are paths from the repo root (e.g. `/mise`), not tool names.
-- `{{ env.DOTFILES }}` is how `installs` commands find their own helper scripts without depending on the current working directory.
-
-## Bootstrap flow
-
-1. **`bootstrap/prereq.ps1`/`prereq.sh`** — installs pwsh7 if missing, then hands off to `bootstrap.ps1` running under pwsh7.
-2. **`bootstrap/bootstrap.ps1`** (pwsh7, both OSes):
-   1. Resolves this repo's path and persists it as `$env:DOTFILES` (so plain `rotz install` keeps working in later sessions) via `Set-UserEnvVar`.
-   2. On Windows only: sets `XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`XDG_CACHE_HOME`/`XDG_STATE_HOME` under `%USERPROFILE%` so tools resolve config the same way Linux does by default.
-   3. Installs `mise` (portable, user-scoped) via `mise/install.ps1`.
-   4. Installs `rotz` itself through mise's generic GitHub backend (`mise use --global github:volllly/rotz`) — rotz has no mise registry entry but does publish standard target-triple release zips.
-   5. Runs `rotz install --continue-on-error` (executes every dot's install command - this is also what clones LazyVim for the neovim dot).
-   6. Deploys every dot.yaml's `links:` via `Sync-DotLinks` (see below) — always *after* `rotz install`, since dots like `neovim` depend on their clone step existing before this repo's own overrides get copied on top.
-
-Every stage prints `==> [stage] ...` plus the key values involved (resolved paths, download URLs, versions) specifically so a hang or failure can be pinpointed from console output alone — this was added after the previous two-dialect scripts hung silently with no indication of where.
-
-`bootstrap/common.ps1` holds shared helpers (`Get-BootstrapPaths`, `Get-LatestGithubAsset`, `Install-PortableZip`, `Install-PortableTarGz`, `Add-UserPath`, `Set-UserEnvVar`, `Invoke-ExternalCommand`, `Get-DotLinks`, `Test-DotLinkUpToDate`, `Sync-DotLinks`) used by `bootstrap.ps1` and every per-tool `install.ps1`. `Add-UserPath`/`Set-UserEnvVar` branch internally on `$IsWindows` (registry `HKCU\Environment`) vs. Linux (`~/.profile`/`~/.bashrc`, idempotent append).
-
-## Where downloads and installs land: `bootstrap/paths.env`
-
-Single source of truth for two paths, read by `Get-BootstrapPaths`, plain `KEY=value` text (not YAML/PSD1):
 ```
-DOWNLOADS_DIR=.local/downloads   # raw downloaded archives - kept, not deleted, after extraction (cache by filename)
-INSTALL_DIR=.local/opt           # extracted tools, one subfolder per tool: <INSTALL_DIR>/git, /wezterm, /mise, /pwsh7
+bootstrap/
+  prereq.ps1     - Windows entry point (stock PowerShell 5.1): installs pwsh7, hands off
+  prereq.sh      - Linux entry point (bash): installs pwsh7, hands off
+  bootstrap.ps1  - pwsh7 orchestrator: fixed stage order (see below), logging, summary
+  common.ps1     - shared functions, see next section
+  paths.env      - DOWNLOADS_DIR/INSTALL_DIR/BACKUP_DIR config (see below)
+<tool>/          - git, mise, wezterm, python, rust, zig, java, yazi, neovim
+  install.ps1    - installs the tool + deploys its own config via Sync-DotLink
+  <config files> - whatever that tool's install.ps1 deploys (e.g. git/gitconfig)
 ```
-Each key is either relative to `$HOME`/`%USERPROFILE%` (joined at runtime, as above) or an **absolute path** (e.g. `DOWNLOADS_DIR=D:\tools\download`), resolved by `Resolve-ConfiguredPath` in `common.ps1`. `Install-PortableZip`/`Install-PortableTarGz` take `-DownloadsDir` and `-DestDir` params derived from this — no script hardcodes `.local/opt/<tool>` or a temp path anymore. Every install script resolves its executable dynamically from inside its own `INSTALL_DIR` subfolder (via `Get-ChildItem -Recurse` for the binary name) rather than assuming an exact archive layout, since flattening/nesting varies per tool's zip.
 
-**Absolute paths are OS-specific** — a Windows drive-letter path means nothing on Linux and vice versa, so a bare key can be overridden per OS with a `_WINDOWS`/`_LINUX` suffixed key (e.g. `DOWNLOADS_DIR_LINUX=/opt/tools/download`), checked first and falling back to the bare key. `Resolve-ConfiguredPath` (common.ps1), and the equivalent `Resolve-ConfiguredPathWindows` (prereq.ps1) / `resolve_configured_path` (prereq.sh) functions, detect whether a resolved value is absolute-for-the-current-OS, absolute-but-shaped-for-the-other-OS (throws a clear error naming the suffixed key to add instead of silently mangling the path), or relative (joined with home). **Bash gotcha found and fixed while building this**: an unquoted `\\` in a `case` glob pattern matches two literal backslashes, not one — matching a single-backslash Windows path like `D:\tools\download` requires a quoted `'\'` in the pattern (`[A-Za-z]:'\'*`), not `\\`.
+`bootstrap/common.ps1` functions, all used by `bootstrap.ps1` and/or per-tool `install.ps1`:
+- `Write-Log` — the standard log line (see below).
+- `Invoke-Stage` — runs a named scriptblock, logs start/finish/elapsed via `Write-Log`, `-ContinueOnError` swallows a throw into a logged `ERROR` + `$false` return instead of propagating.
+- `Get-BootstrapPaths` / `Resolve-ConfiguredPath` — resolve `paths.env` (see below).
+- `Get-LatestGithubAsset`, `Install-PortableZip`, `Install-PortableTarGz` — GitHub release download helpers.
+- `Add-UserPath`, `Set-UserEnvVar` — persist PATH/env vars, branching on `$IsWindows`/`$IsLinux` (registry vs. `~/.profile`/`~/.bashrc`).
+- `Test-DotLinkUpToDate`, `Sync-DotLink` — config deployment (see "Deploying dotfiles" below).
+- `Invoke-ExternalCommand` — runs a real external program (mise, git, apt-get, ...) with `STARTING`/`FINISHED` log boundaries around its untouched output.
 
-This file has to be plain text, not a PowerShell data file, because `prereq.ps1` (Windows PowerShell 5.1) and `prereq.sh` (bash) both parse it by hand — they run *before* pwsh7/`common.ps1` exist, so they can't use `Get-BootstrapPaths`. If you add a new config key, update the parser in all three places: `Get-BootstrapPaths` in `common.ps1`, the regex loop in `prereq.ps1`, and the `grep`/`cut` lines in `prereq.sh`.
+## Bootstrap flow — fixed order, defined in `bootstrap.ps1`
 
-Two exceptions to `INSTALL_DIR`, both called out in comments at their call sites: mise on Linux is installed by mise's own official installer (`curl https://mise.run | sh`), which picks `~/.local/bin/mise` on its own; and mise's *internal* data (installed toolchains, shims) lives under `~/.local/share/mise/...` — mise's own convention, unrelated to this repo's `INSTALL_DIR`.
+1. `prereq.ps1`/`prereq.sh` install pwsh7, then hand off to `bootstrap.ps1`.
+2. `bootstrap.ps1` (pwsh7, both OSes), via `Invoke-Stage` for every step:
+   1. Environment variables (`$env:DOTFILES`; Windows-only `XDG_*`).
+   2. **mise** — hard dependency (no `-ContinueOnError`): python/rust/zig/java/yazi/neovim all need it, so a failure here throws and aborts the whole script instead of cascading into confusing downstream failures.
+   3. **git** — also hard: neovim's stage needs `git` on PATH.
+   4. `$softStages` (ordered hashtable, `-ContinueOnError`): `wezterm`, `python`, `rust`, `zig`, `java`, `yazi`, `neovim` — in that literal order. `neovim` is last because it's the one stage needing both hard dependencies above. Add new tools to this hashtable, in dependency order relative to whatever they need.
+   5. Summary: per-stage `OK`/`FAILED` plus total elapsed, from the `$results` collected by each `Invoke-Stage` call.
 
-Because mise's own binary no longer lives at a fixed path (Windows: wherever it lands under `<INSTALL_DIR>/mise`, dynamically discovered), `bootstrap.ps1` resolves `$miseExe` via `Get-Command mise` after `mise/install.ps1` runs (which already added the right folder to the current session's PATH) instead of hardcoding a second guess that could drift out of sync.
+If you add a tool whose failure would make everything after it pointless (like mise/git), give it its own `Invoke-Stage` call with no `-ContinueOnError`, placed before `$softStages`, not inside the hashtable.
 
-## Dotfiles are deployed by copying, not by `rotz link` — do not reintroduce symlinking
+## Standard log format — every script, no exceptions
 
-`bootstrap.ps1` never calls `rotz link`. Stage 5/5 (last stage) calls `Sync-DotLinks -RepoRoot $RepoRoot -BackupDir $paths.BackupDir` instead (paths from `Get-BootstrapPaths`, `BACKUP_DIR` in `paths.env`, default `~/.local/backup`).
+```
+[yyyy-MM-dd HH:mm:ss.fff] [LEVEL] [tag] message
+```
+`Write-Log -Tag "<tag>" -Level "INFO|WARN|ERROR" -Message "..."` in every pwsh7 script (default `-Level INFO`, default `-Tag "common"` — always pass an explicit `-Tag` matching the tool/script, e.g. `"git"`, `"neovim"`, `"bootstrap"`). Millisecond timestamps are load-bearing: they're what let you compute the gap between two log lines after a hang to see exactly where the time went, which is the whole point of this format (there's no other progress/timing UI in this repo). `prereq.ps1` and `prereq.sh` each carry their own tiny duplicate `Write-Log`/`log()` (can't dot-source `common.ps1` — see "pwsh7 boundary" below) using the identical format string. **Any new script or `Write-Host` call added to this repo must go through `Write-Log`, not bare `Write-Host`** — the one exception is `Invoke-ExternalCommand`'s pass-through of a real external program's own stdout/stderr, which must stay completely untouched (no prefix, no timestamp) so its own progress bars/spinners still render.
 
-**Why, precisely — confirmed by reading rotz's own source (`src/config.rs`, `src/commands/link.rs`), not assumed:** rotz's `LinkType` enum has exactly two variants, `Symbolic` and `Hard` — no copy mode exists in rotz at all. Neither variant is safe to assume available on this repo's target machines:
-- `Symbolic` needs `SeCreateSymbolicLinkPrivilege`, granted by Windows Developer Mode — which itself needs an admin session to enable. `New-Item -ItemType SymbolicLink` was confirmed failing with "Administrator privilege required for this operation" on a real machine without it.
-- `Hard` uses real hard links for files and NTFS junctions for directories on Windows (per rotz's source). Junctions cross drives fine with no admin (confirmed: `New-Item -ItemType Junction` from `D:\...` to `C:\Users\...` succeeded). Hard links for **files** do not: confirmed failing with "The system cannot move the file to a different disk drive" the moment source and target are on different volumes — completely normal here, since the dotfiles repo living on a different drive than `%USERPROFILE%` is an ordinary setup this repo has to support, not an edge case.
+## pwsh7 boundary: `prereq.ps1`/`prereq.sh` vs. everything else
 
-Copying avoids both failure modes (no admin, works across drives) at a real cost: **no live sync**. A symlink means an edit to a tracked file in this repo is immediately visible at the deployed path; a copy is a snapshot from whenever `Sync-DotLinks` last ran, and needs a re-run to pick up further edits. **Do not "fix" this by switching back to `rotz link` or `link_type: Hard`** without re-solving the admin/cross-drive problem first — that's the whole reason this mechanism exists.
+`bootstrap/prereq.ps1` (Windows, stock PowerShell 5.1) and `bootstrap/prereq.sh` (Linux, bash) are the only scripts not written against pwsh7 — their entire job is installing pwsh7 itself, which can't be done by a pwsh7 script. They deliberately do **not** dot-source `common.ps1` (it uses `$IsWindows`/`$IsLinux`, which don't exist under Windows PowerShell 5.1) and carry their own small, intentionally duplicated copies of: the standard log function, `paths.env` parsing/resolution (`Resolve-ConfiguredPathWindows` in `prereq.ps1`, `resolve_configured_path` in `prereq.sh`), and portable-zip/tarball download+extract logic. This is the one deliberate piece of duplication in the repo — everything past the pwsh7 handoff lives in exactly one place. `bootstrap.ps1` itself starts with `#Requires -Version 7.0` plus an explicit version check that throws a clear error if invoked under 5.1 directly, so skipping `prereq.ps1`/`prereq.sh` fails fast instead of confusingly.
 
-`Sync-DotLinks` (in `common.ps1`) drives itself off the repo's own `dot.yaml` files rather than a separately maintained list, via two other functions also in `common.ps1`:
-- `Get-DotLinks` extracts every `links:` entry as a `{ Source, Target }` pair (Source resolved to an absolute path under the dot's own folder; Target left with `~` unexpanded) by tracking indentation relative to wherever `links:` itself appears. **This is a narrow parser scoped to the exact shape this repo's `links:` blocks use, not a general YAML parser** — no lists, no quoting, flat `key: value` lines only. If a `links:` block ever needs something fancier, this parser needs updating too.
-- `Test-DotLinkUpToDate` compares Source and (resolved) Target by content hash — a single file hash for file links, a full recursive per-file hash comparison for directory links (e.g. neovim's `config/lua/config`) — to decide whether a link needs redeploying at all.
+## `bootstrap/paths.env`: DOWNLOADS_DIR / INSTALL_DIR / BACKUP_DIR
 
-For each link, `Sync-DotLinks` has three outcomes: if Target **doesn't exist**, it copies with nothing to back up; if Target **already matches Source** (`Test-DotLinkUpToDate`), it skips entirely — this is what keeps re-running the bootstrap on an unchanged repo cheap and quiet instead of re-backing-up and re-copying everything on every single run; if Target **exists and differs**, it `Move-Item`s it to `<BackupDir>/<timestamp>/<same relative path under home>` first, then `Copy-Item -Recurse -Force`s Source over the now-clear path. Verified with an isolated fixture covering all of: new file (plain copy), differing pre-existing file (backup then copy, content of both verified), a nested directory tree (mirrors neovim's shape), unchanged re-run (zero new backups), and a changed repo source on a second run (the previously-deployed version gets backed up before the new one lands).
+Plain `KEY=value` text (not YAML/PSD1) — read by three different runtimes: `Get-BootstrapPaths` (`common.ps1`, pwsh7) and the two prereq scripts' own hand-rolled parsers (PowerShell 5.1 and bash, respectively, since they run before pwsh7/`common.ps1` exist). If you add a new key, update all three parsers.
 
-`config.yaml`'s `link_type: Symbolic` is no longer read by this repo's bootstrap flow at all — left in place only for documentation/anyone running `rotz link` by hand.
+Each key is either relative to `$HOME`/`%USERPROFILE%` (joined at runtime) or an **absolute path** (e.g. `DOWNLOADS_DIR=D:\tools\download`), resolved by `Resolve-ConfiguredPath` (`common.ps1`) / the prereq scripts' equivalents. Absolute paths are OS-specific — a bare key can be overridden per OS with a `_WINDOWS`/`_LINUX` suffixed key (checked first, falls back to the bare key). A value that's absolute but shaped for the *other* OS (Windows drive letter on Linux, or vice versa) throws a clear error naming the suffixed key to add, rather than silently mangling the path. **Bash gotcha found and fixed while building this**: an unquoted `\\` in a `case` glob pattern matches two literal backslashes, not one — matching a single-backslash Windows path requires a quoted `'\'` in the pattern (`[A-Za-z]:'\'*`), not `\\`.
 
-## yazi's `y` shell wrapper
+`Install-PortableZip`/`Install-PortableTarGz` take `-DownloadsDir`/`-DestDir` derived from this — no script hardcodes `.local/opt/<tool>` or a temp path. Every install script resolves its executable dynamically from inside its own `INSTALL_DIR` subfolder (`Get-ChildItem -Recurse` for the binary name) rather than assuming an exact archive layout.
 
-`yazi/install.ps1` does `mise use --global yazi` *and* installs the official [`y` shell wrapper function](https://yazi-rs.github.io/docs/quick-start#shell-wrapper) into your shell profile — Windows: pwsh7's `$PROFILE` (not Windows PowerShell 5.1's, a different file — this repo assumes pwsh7 is the day-to-day shell); Linux: `~/.bashrc`. Plain `yazi` only affects its own process (quitting always returns you to wherever you started); `y` reads back the directory you navigated to (via `--cwd-file`) and `cd`s your actual shell there.
+Two exceptions to `INSTALL_DIR`: mise on Linux is installed by mise's own official installer (`curl https://mise.run | sh`), which picks `~/.local/bin/mise` on its own; and mise's *internal* data (installed toolchains, shims) lives under `~/.local/share/mise/...`, mise's own convention. Because mise's own binary doesn't live at a fixed path (Windows: wherever it lands under `<INSTALL_DIR>/mise`), `bootstrap.ps1` resolves `$miseExe` via `Get-Command mise` after `mise/install.ps1` runs, instead of hardcoding a second guess that could drift out of sync.
 
-The write is idempotent via a local `Set-ManagedBlock` helper (defined inline in `yazi/install.ps1`, not `common.ps1` — this pattern is only used once so far): the function body is wrapped in `# >>> yazi shell wrapper ... >>>` / `# <<< ... <<<` marker comments, and if those markers are already present in the profile, everything between them is replaced in place rather than appended again — so editing the wrapper's definition in `yazi/install.ps1` and re-running the bootstrap updates it in the profile too, without duplicating it or touching anything else already in that profile.
+## Deploying dotfiles: `Sync-DotLink`, copy-based, called per-tool
+
+No central "link" pass. Each tool's `install.ps1` calls `Sync-DotLink -Source <path> -Target "~/..." -BackupDir $paths.BackupDir` directly for whatever config it owns (e.g. `git/install.ps1` → `git/gitconfig` → `~/.gitconfig`; `neovim/install.ps1` → two folders; `wezterm`/`yazi` → their own files). It **copies**, not symlinks — see "No external orchestration tool" above for the admin/cross-drive reasoning that ruled out real links.
+
+For each call: **target missing** → copy, nothing to back up. **Target already matches source** (`Test-DotLinkUpToDate` — file hash, or full recursive per-file hash comparison for a directory link like neovim's `config/lua/config`) → skip entirely, so re-running the bootstrap on an unchanged repo doesn't churn out fresh backups/copies every time. **Target exists and differs** → `Move-Item` to `<BackupDir>/<timestamp>/<relative path under home>` first, then `Copy-Item -Recurse -Force` the source over the now-clear path — this also means editing a tracked file and re-running the bootstrap backs up the previously-deployed version before replacing it, so nothing is ever silently overwritten.
+
+**Cost of copying vs. symlinking, worth remembering when debugging "why didn't my edit show up":** no live sync. A copy is a snapshot from whenever `Sync-DotLink` last ran for it — editing a tracked file in this repo needs another `install.ps1` run (or a manual `Sync-DotLink` call) to reach the deployed path.
+
+## LazyVim: clone once, `git pull` on every re-run — keep `.git`
+
+`neovim/install.ps1` clones [LazyVim/starter](https://github.com/LazyVim/starter) into `~/.config/nvim` and **keeps `.git`** (an earlier version of this repo deleted it right after cloning specifically to detach from upstream, which meant it could only ever be cloned once — the current version deliberately reverses that so it can be kept in sync). Logic: `.git` present → `git -C <path> pull --ff-only`; `.git` absent but the directory exists (leftover from the old delete-`.git` behavior) → remove and re-clone fresh (self-healing migration); neither → clone fresh. `Sync-DotLink` for this repo's own `config/lua/config`/`lua/plugins` overrides always runs *after* the clone/pull, never before, so they land on top of whatever LazyVim's starter currently looks like.
 
 ## WezTerm is pinned to nightly — the one tool-specific exception
 
-Every other portable tool in this repo installs the latest stable release. `wezterm/install.ps1` deliberately always installs the **nightly** build instead, on both OSes — this is scoped to wezterm only, not a general pattern.
+Every other portable tool in this repo installs the latest stable release. `wezterm/install.ps1` deliberately always installs the **nightly** build instead, on both OSes — scoped to wezterm only.
 
-Two `common.ps1` helpers gained optional params for exactly this, unused by every other call site (`git`, `mise`):
+Two `common.ps1` helpers have optional params for exactly this, unused by every other call site (`git`, `mise`):
 - `Get-LatestGithubAsset -Tag "nightly"` fetches `/releases/tags/nightly` instead of `/releases/latest` — required because WezTerm's nightly is marked `"prerelease": true`, which `/releases/latest` always excludes.
-- `Install-PortableZip -Force` always re-downloads even if a same-named file is already cached in `DownloadsDir` — required because WezTerm's nightly assets (`WezTerm-windows-nightly.zip`) keep the same filename forever while the actual contents change on every build, which would otherwise make the filename-based download cache stick to whatever nightly build was fetched first.
+- `Install-PortableZip -Force` always re-downloads even if a same-named file is cached — required because WezTerm's nightly assets keep the same filename forever while the contents change on every build.
 
-Consequently `wezterm/install.ps1` also never short-circuits on "already installed" like every other install script does — it always re-checks/re-downloads/re-extracts on every bootstrap run. On Linux there's no apt-repo branch at all anymore (even with sudo): WezTerm's apt repo only ships stable builds, so it's dropped entirely in favor of always using the nightly AppImage (pinned to the `Ubuntu20.04` build for broad forward-compatibility — older-glibc AppImages generally still run on newer distros).
-
-## Every network call has a timeout — this is load-bearing
-
-Every `Invoke-WebRequest`/`Invoke-RestMethod` call passes an explicit `-TimeoutSec`. The one place a native subprocess could hang forever — Git for Windows' self-extracting `.7z.exe` — is guarded with `Start-Process -PassThru` + `$proc.WaitForExit(<ms>)`, force-killed via `Stop-Process` if it doesn't finish in time. This exists because the bootstrap used to hang indefinitely on a stalled connection (offline, corporate proxy, firewall) with zero error output. **Any new download added to this repo must follow the same pattern** — an un-timed-out `Invoke-WebRequest` or subprocess call is exactly the bug class this rewrite fixed.
+`wezterm/install.ps1` also never short-circuits on "already installed" — it always re-checks/re-downloads/re-extracts. On Linux there's no apt-repo branch at all (even with sudo) — WezTerm's apt repo only ships stable builds — so it's always the nightly AppImage (pinned to `Ubuntu20.04` for broad forward-compatibility).
 
 ## Core invariant: no hardcoded paths, no admin/sudo
 
 Every install path in this repo is derived from `$env:USERPROFILE`/`$HOME`, never a hardcoded drive letter or absolute path, so it behaves the same whether Windows puts user profiles on `C:` or `D:`:
-- Portable tool downloads/installs: `DOWNLOADS_DIR`/`INSTALL_DIR` from `bootstrap/paths.env` (see above) — defaults to `~/.local/downloads` and `~/.local/opt/<tool>`
+- Portable tool downloads/installs: `DOWNLOADS_DIR`/`INSTALL_DIR` from `bootstrap/paths.env` — defaults to `~/.local/downloads` and `~/.local/opt/<tool>`
 - mise's own data: `~/.local/share/mise`, `~/.local/bin` (Linux mise binary only) — mise's own convention, not ours
 - Config files: `~/.config/<tool>/...` on both OSes
 
 PATH changes on Windows go to the **user** registry hive (`HKCU\Environment`) only, never machine-wide PATH. Any new install script must preserve this — no admin/sudo dependency anywhere it's technically avoidable.
 
-`git` and `wezterm` are fetched directly from GitHub Releases as portable zips/AppImage/self-extracting archives (verified against `github.com/jdx/mise/registry/*.toml` to confirm they aren't in mise's registry) rather than via mise, with `$IsWindows`/`$IsLinux` branches inside a single `install.ps1` for the OS-specific download logic (`git` still has an apt branch on Linux; `wezterm` does not — see above). `python`/`rust`/`zig` install via a plain `mise use --global <tool>` one-liner directly in `dot.yaml` (no install script needed — genuinely OS-agnostic, nothing else to do). `neovim` and `yazi` both need a dedicated `install.ps1` despite being mise-installed tools, because each has one extra piece of setup beyond the mise install itself: `neovim` clones LazyVim on first run (see below), `yazi` adds the `y` shell wrapper to your profile (see below). `java` is the other exception: it needs multiple JDK versions side-by-side (see below), so it follows the dedicated-script pattern instead of a one-liner.
+`git` and `wezterm` are fetched directly from GitHub Releases as portable zips/AppImage/self-extracting archives (verified against `github.com/jdx/mise/registry/*.toml` to confirm they aren't in mise's registry) rather than via mise, with `$IsWindows`/`$IsLinux` branches inside a single `install.ps1` (`git` has an apt branch on Linux; `wezterm` does not — see above). `python`/`rust`/`zig` install via a plain `Invoke-ExternalCommand -Exe "mise" -Arguments @("use", "--global", "<tool>")` one-liner install.ps1 — genuinely OS-agnostic, nothing else to do. `neovim` and `yazi` both need more than the mise install itself: `neovim` clones/updates LazyVim (see above), `yazi` adds the `y` shell wrapper. `java` needs multiple JDK versions side-by-side (see below).
 
 ### Java: multiple JDKs side-by-side
 
-`java/install.ps1` installs Eclipse Temurin 8, 11, 17, 21, and 25 via `mise install java@temurin-<N>` (each call is a no-op if that version is already present — this is what makes reruns idempotent, not a hand-rolled existence check), then runs `mise use --global java@temurin-25` last so 25 is what `java`/`javac` resolve to with no extra config. The other four stay installed on disk under mise's install dir and are available to any project that pins a different version in its own `mise.toml`/`.tool-versions`, without re-downloading. Temurin specifically, not mise's generic `openjdk-<N>` shorthand — confirmed via `mise ls-remote java`/`mise latest java@temurin-<N>` that all five short-form version strings (`temurin-8`, `temurin-11`, `temurin-17`, `temurin-21`, `temurin-25`) resolve to a real patch release before switching to this. If the set of versions or the default ever changes, edit the `$versions`/`$default` variables at the top of the script.
+`java/install.ps1` installs Eclipse Temurin 8, 11, 17, 21, and 25 via `mise install java@temurin-<N>` (each call is a no-op if that version is already present — this is what makes reruns idempotent, not a hand-rolled existence check), then runs `mise use --global java@temurin-25` last so 25 is what `java`/`javac` resolve to with no extra config. The other four stay installed on disk under mise's install dir. Temurin specifically, not mise's generic `openjdk-<N>` shorthand — confirmed via `mise ls-remote java`/`mise latest java@temurin-<N>` that all five short-form version strings resolve to a real patch release before switching to this. If the set of versions or the default ever changes, edit the `$versions`/`$default` variables at the top of the script.
 
-## Adding a new tool whose config comes from a git repo
+## Every network call has a timeout — this is load-bearing
 
-Pattern already used by `neovim/install.ps1` for cloning LazyVim — generalize this for anything you'd rather clone than hand-author:
+Every `Invoke-WebRequest`/`Invoke-RestMethod` call passes an explicit `-TimeoutSec`. The one place a native subprocess could hang forever — Git for Windows' self-extracting `.7z.exe` — is guarded with `Start-Process -PassThru` + `$proc.WaitForExit(<ms>)`, force-killed via `Stop-Process` if it doesn't finish in time. This exists because the bootstrap used to hang indefinitely on a stalled connection (offline, corporate proxy, firewall) with zero error output. **Any new download added to this repo must follow the same pattern.**
 
-1. Create `<tool>/dot.yaml` with `installs: pwsh -NoProfile -File "{{ env.DOTFILES }}/<tool>/install.ps1"`.
-2. In that script: install the binary (mise if registered, otherwise a portable download like `git`/`wezterm`, with `$IsWindows`/`$IsLinux` branches only where the OSes genuinely differ), then `git clone` the config repo into its real target location **only if it isn't already there** — idempotency, never clobber a working setup on re-runs.
-3. To layer your own overrides on top of the cloned repo (as this repo does with `neovim/config/lua/config` and `lua/plugins`), add a `links` section in `dot.yaml` for just those subfolders/files — `Sync-DotLinks` always runs after `rotz install` for exactly this reason, so the clone exists before the overrides get copied on top.
+## Adding a new tool
+
+1. Create `<tool>/install.ps1`: install the binary (mise one-liner if registered, otherwise a portable download with `$IsWindows`/`$IsLinux` branches only where the OSes genuinely differ), then `Sync-DotLink` any config files it owns.
+2. Add it to `$softStages` in `bootstrap.ps1` (or as its own hard-dependency `Invoke-Stage` call, before `$softStages`, if something later genuinely can't work without it — like `mise`/`git`).
+3. If cloning a config repo (LazyVim pattern): clone/update first, `Sync-DotLink` your own overrides after, same order every time.
 
 ## Gotchas
 
-- **Never commit a tracked `mise/config.toml` at the repo root.** `mise` recognizes `mise/config.toml` (relative to cwd) as one of its own local-project config file names, so a repo-tracked one makes every `mise` invocation from inside this repo prompt to "trust" and load it as a project config. It was removed for this reason. Tool versions are pinned instead by each dot running `mise use --global <tool>`, which writes straight to mise's real global config (`~/.config/mise/config.toml`) — no repo-tracked mise config needed.
-- `git/gitconfig` ships without `user.name`/`user.email` — these must be set per-machine (`git config --global user.name "..."`) or by editing the linked file directly, not baked into the repo.
-- `config.yaml` at the repo root is rotz's own default config (`link_type: Symbolic`); it's mostly documentation — `bootstrap.ps1` always passes `--dotfiles` explicitly to rotz, and never calls `rotz link` at all (see "Dotfiles are deployed by copying" above), so `link_type` only matters if you run `rotz link` by hand.
+- **Never commit a tracked `mise/config.toml` at the repo root.** `mise` recognizes `mise/config.toml` (relative to cwd) as one of its own local-project config file names, so a repo-tracked one makes every `mise` invocation from inside this repo prompt to "trust" and load it as a project config. Tool versions are pinned instead by each tool's `install.ps1` running `mise use --global <tool>`, which writes straight to mise's real global config (`~/.config/mise/config.toml`).
+- `git/gitconfig` ships without `user.name`/`user.email` — these must be set per-machine (`git config --global user.name "..."`) or by editing the tracked file directly (then re-run the bootstrap, or call `Sync-DotLink` by hand, to redeploy it — editing the file alone doesn't touch what's already deployed at `~/.gitconfig`).
 - `mise/install.ps1` shells out to `bash -c "curl ... | sh"` on Linux for mise's own official installer — this is the one intentional exception to "everything is pwsh", since it's the vendor-documented install method, not custom logic worth reimplementing.
+- There is no `dot.yaml`, no `config.yaml`, no `depends:` resolution — if you find yourself wanting to declare a dependency between tools, express it as ordering in `bootstrap.ps1`'s stage list instead (see "Bootstrap flow" above).
