@@ -9,9 +9,7 @@
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot ".." "bootstrap" "common.ps1")
 
-$homeDir = $null
-if ($IsWindows) { $homeDir = $env:USERPROFILE }
-if ($IsLinux) { $homeDir = $HOME }
+$homeDir = Get-HomeDir
 
 $miseBinName = $null
 if ($IsWindows) { $miseBinName = "mise.exe" }

@@ -45,9 +45,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 . (Join-Path $PSScriptRoot "common.ps1")
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$HomeDir = $null
-if ($IsWindows) { $HomeDir = $env:USERPROFILE }
-if ($IsLinux) { $HomeDir = $HOME }
+$HomeDir = Get-HomeDir
 
 Write-Log -Tag "bootstrap" -Message "Dotfiles repo: $RepoRoot"
 Write-Log -Tag "bootstrap" -Message "pwsh version: $($PSVersionTable.PSVersion)  IsWindows=$IsWindows  IsLinux=$IsLinux  Home=$HomeDir"

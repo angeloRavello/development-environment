@@ -35,6 +35,15 @@ function Write-Log {
   }
 }
 
+# Resolves the current user's home directory the same way everywhere in
+# this repo that needs one (Get-BootstrapPaths, Sync-DotLink, and several
+# install.ps1 scripts all used to repeat this same "$IsWindows ? USERPROFILE
+# : HOME" pair inline) - one place to get it right instead of five.
+function Get-HomeDir {
+  if ($IsWindows) { return $env:USERPROFILE }
+  if ($IsLinux) { return $HOME }
+}
+
 # Runs $Action as a named, timed stage: logs when it starts, how long it
 # took, and whether it succeeded or failed - the single mechanism behind
 # every "step" bootstrap.ps1 runs, so every stage is logged exactly the
@@ -122,9 +131,7 @@ function Resolve-ConfiguredPath {
 # absolute path for the current OS, or a relative fragment joined with
 # home - see Resolve-ConfiguredPath above).
 function Get-BootstrapPaths {
-  $homeDir = $null
-  if ($IsWindows) { $homeDir = $env:USERPROFILE }
-  if ($IsLinux) { $homeDir = $HOME }
+  $homeDir = Get-HomeDir
   $configPath = Join-Path $PSScriptRoot "paths.env"
 
   if (-not (Test-Path $configPath)) {
@@ -387,9 +394,7 @@ function Sync-DotLink {
     [Parameter(Mandatory)][string]$BackupDir
   )
 
-  $homeDir = $null
-  if ($IsWindows) { $homeDir = $env:USERPROFILE }
-  if ($IsLinux) { $homeDir = $HOME }
+  $homeDir = Get-HomeDir
 
   # Call sites write $Target as "~/some/relative/path" using "/" regardless
   # of OS (it reads better than picking a separator per call site) - so
@@ -413,7 +418,13 @@ function Sync-DotLink {
 
   if (Test-Path $resolvedTarget) {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-    $relative = $resolvedTarget.Substring($homeDir.Length).TrimStart('/', '\')
+    # Mirrors $resolvedTarget's path under $homeDir into <BackupDir>/<timestamp>/...
+    # so a backup's location tells you where it came from. Some callers
+    # (e.g. neovim/install.ps1, via $env:XDG_CONFIG_HOME) pass an
+    # already-resolved Target that isn't guaranteed to live under $homeDir -
+    # Substring would throw or produce a nonsense path in that case, so fall
+    # back to just the leaf name instead of assuming the prefix matches.
+    $relative = $resolvedTarget.StartsWith($homeDir) ? $resolvedTarget.Substring($homeDir.Length).TrimStart('/', '\') : (Split-Path -Leaf $resolvedTarget)
     $backupPath = Join-Path $BackupDir $timestamp $relative
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $backupPath) | Out-Null
     Write-Log -Message "Backing up existing $resolvedTarget -> $backupPath"

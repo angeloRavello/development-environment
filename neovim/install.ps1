@@ -7,9 +7,7 @@ $ErrorActionPreference = "Stop"
 
 Invoke-ExternalCommand -Exe "mise" -Arguments @("use", "--global", "neovim") -Label "mise use --global neovim"
 
-$homeDir = $null
-if ($IsWindows) { $homeDir = $env:USERPROFILE }
-if ($IsLinux) { $homeDir = $HOME }
+$homeDir = Get-HomeDir
 $xdgConfigHome = $env:XDG_CONFIG_HOME ?? (Join-Path $homeDir ".config")
 $nvimConfig = Join-Path $xdgConfigHome "nvim"
 
