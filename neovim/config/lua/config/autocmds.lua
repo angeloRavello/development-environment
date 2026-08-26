@@ -7,14 +7,15 @@
 -- Or remove existing autocmds by their group name (which is prefixed with `lazyvim_` for the defaults)
 -- e.g. vim.api.nvim_del_augroup_by_name("lazyvim_wrap_spell")
 
--- Java/Maven projects conventionally indent with 4 spaces (Google/Sun
--- style), not the 2-space default used elsewhere in this config.
+-- Java files use the same 2-space indentation as the rest of this config
+-- (explicit here, not just relying on the global default, so it's clear
+-- this was a deliberate choice and not an oversight).
 vim.api.nvim_create_autocmd("FileType", {
   pattern = "java",
   callback = function()
-    vim.bo.shiftwidth = 4
-    vim.bo.tabstop = 4
-    vim.bo.softtabstop = 4
+    vim.bo.shiftwidth = 2
+    vim.bo.tabstop = 2
+    vim.bo.softtabstop = 2
     vim.bo.expandtab = true
   end,
 })
