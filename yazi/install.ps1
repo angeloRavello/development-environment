@@ -8,14 +8,14 @@
 # process - quitting always drops you back exactly where you started, no
 # matter how far you browsed. Runs under pwsh7 on both Windows and Linux.
 $ErrorActionPreference = "Stop"
-. "$PSScriptRoot/../bootstrap/common.ps1"
+. (Join-Path $PSScriptRoot ".." "bootstrap" "common.ps1")
 
 Invoke-ExternalCommand -Exe "mise" -Arguments @("use", "--global", "yazi") -Label "mise use --global yazi"
 
 $paths = Get-BootstrapPaths
-Sync-DotLink -Source "$PSScriptRoot/yazi.toml" -Target "~/.config/yazi/yazi.toml" -BackupDir $paths.BackupDir
-Sync-DotLink -Source "$PSScriptRoot/keymap.toml" -Target "~/.config/yazi/keymap.toml" -BackupDir $paths.BackupDir
-Sync-DotLink -Source "$PSScriptRoot/theme.toml" -Target "~/.config/yazi/theme.toml" -BackupDir $paths.BackupDir
+Sync-DotLink -Source (Join-Path $PSScriptRoot "yazi.toml") -Target "~/.config/yazi/yazi.toml" -BackupDir $paths.BackupDir
+Sync-DotLink -Source (Join-Path $PSScriptRoot "keymap.toml") -Target "~/.config/yazi/keymap.toml" -BackupDir $paths.BackupDir
+Sync-DotLink -Source (Join-Path $PSScriptRoot "theme.toml") -Target "~/.config/yazi/theme.toml" -BackupDir $paths.BackupDir
 
 # Idempotently writes $Content between two marker comment lines in
 # $ProfilePath: if the markers are already there (from a previous run),

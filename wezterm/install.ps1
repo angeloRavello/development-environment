@@ -25,13 +25,13 @@
 #            only ever carries stable releases, which would silently
 #            defeat "always nightly" for anyone with sudo.
 $ErrorActionPreference = "Stop"
-. "$PSScriptRoot/../bootstrap/common.ps1"
+. (Join-Path $PSScriptRoot ".." "bootstrap" "common.ps1")
 
 $paths = Get-BootstrapPaths
-$destDir = "$($paths.InstallDir)/wezterm"
+$destDir = Join-Path $paths.InstallDir "wezterm"
 
 if ($IsWindows) {
-  $exe = "$destDir/wezterm.exe"
+  $exe = Join-Path $destDir "wezterm.exe"
   Write-Log -Tag "wezterm" -Message "Installing nightly build to $destDir"
   $url = Get-LatestGithubAsset -Repo "wezterm/wezterm" -Tag "nightly" -Pattern '^WezTerm-windows-nightly\.zip$'
   Install-PortableZip -Url $url -DestDir $destDir -DownloadsDir $paths.DownloadsDir -Force
@@ -53,7 +53,8 @@ if ($IsWindows) {
 }
 if ($IsLinux) {
   New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-  $appImage = "$destDir/wezterm.AppImage"
+  $appImage = Join-Path $destDir "wezterm.AppImage"
+  $wezSymlink = Join-Path $destDir "wezterm"
   Write-Log -Tag "wezterm" -Message "Installing nightly AppImage to $destDir"
   # Pinned to the Ubuntu 20.04 build for broad compatibility: an AppImage
   # linked against an older glibc generally still runs fine on newer
@@ -69,14 +70,14 @@ if ($IsLinux) {
   # && (PS7 pipeline chain operator): only symlink if chmod actually
   # succeeded, instead of silently proceeding on a failed chmod like a
   # plain sequence of two statements would.
-  chmod +x $appImage && ln -sf $appImage "$destDir/wezterm"
-  if (-not (Test-Path "$destDir/wezterm")) {
-    throw "chmod +x / ln -sf on $appImage did not produce $destDir/wezterm - see the raw chmod/ln output above"
+  chmod +x $appImage && ln -sf $appImage $wezSymlink
+  if (-not (Test-Path $wezSymlink)) {
+    throw "chmod +x / ln -sf on $appImage did not produce $wezSymlink - see the raw chmod/ln output above"
   }
   Add-UserPath $destDir
 
   Write-Log -Tag "wezterm" -Message "Verifying installation"
-  & "$destDir/wezterm" --version
+  & $wezSymlink --version
 }
 
-Sync-DotLink -Source "$PSScriptRoot/wezterm.lua" -Target "~/.config/wezterm/wezterm.lua" -BackupDir $paths.BackupDir
+Sync-DotLink -Source (Join-Path $PSScriptRoot "wezterm.lua") -Target "~/.config/wezterm/wezterm.lua" -BackupDir $paths.BackupDir

@@ -100,7 +100,12 @@ function Resolve-ConfiguredPath {
     }
   }
 
-  return "$HomeDir/$Value"
+  # $Value comes straight from paths.env and may use either slash style
+  # (e.g. ".local/downloads") - normalize it to this OS's separator before
+  # joining, so the result is never a Windows base path with a stray "/"
+  # spliced in (or vice versa on Linux).
+  $normalized = $Value -replace '[\\/]', [System.IO.Path]::DirectorySeparatorChar
+  return Join-Path $HomeDir $normalized
 }
 
 # Reads bootstrap/paths.env - the single source of truth for where
@@ -120,7 +125,7 @@ function Get-BootstrapPaths {
   $homeDir = $null
   if ($IsWindows) { $homeDir = $env:USERPROFILE }
   if ($IsLinux) { $homeDir = $HOME }
-  $configPath = "$PSScriptRoot/paths.env"
+  $configPath = Join-Path $PSScriptRoot "paths.env"
 
   if (-not (Test-Path $configPath)) {
     throw "Missing config file: $configPath"
@@ -213,7 +218,7 @@ function Install-PortableZip {
   New-Item -ItemType Directory -Force -Path $DownloadsDir | Out-Null
 
   $fileName = Split-Path -Leaf ([Uri]$Url).AbsolutePath
-  $dest = "$DownloadsDir/$fileName"
+  $dest = Join-Path $DownloadsDir $fileName
 
   if ((Test-Path $dest) -and -not $Force) {
     Write-Log -Message "Already downloaded at $dest - skipping download"
@@ -255,7 +260,7 @@ function Install-PortableTarGz {
   New-Item -ItemType Directory -Force -Path $DownloadsDir | Out-Null
 
   $fileName = Split-Path -Leaf ([Uri]$Url).AbsolutePath
-  $dest = "$DownloadsDir/$fileName"
+  $dest = Join-Path $DownloadsDir $fileName
 
   if (Test-Path $dest) {
     Write-Log -Message "Already downloaded at $dest - skipping download"
@@ -385,7 +390,16 @@ function Sync-DotLink {
   $homeDir = $null
   if ($IsWindows) { $homeDir = $env:USERPROFILE }
   if ($IsLinux) { $homeDir = $HOME }
-  $resolvedTarget = $Target.StartsWith("~") ? ($homeDir + $Target.Substring(1)) : $Target
+
+  # Call sites write $Target as "~/some/relative/path" using "/" regardless
+  # of OS (it reads better than picking a separator per call site) - so
+  # normalize to this OS's separator before Join-Path, otherwise Windows
+  # ends up with a backslash home dir plus a literal "/" splice.
+  $resolvedTarget = $Target
+  if ($Target.StartsWith("~")) {
+    $relative = ($Target.Substring(1).TrimStart('/', '\')) -replace '[\\/]', [System.IO.Path]::DirectorySeparatorChar
+    $resolvedTarget = Join-Path $homeDir $relative
+  }
 
   if (-not (Test-Path $Source)) {
     Write-Log -Level "WARN" -Message "Sync-DotLink source $Source does not exist - skipping"
@@ -400,7 +414,7 @@ function Sync-DotLink {
   if (Test-Path $resolvedTarget) {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $relative = $resolvedTarget.Substring($homeDir.Length).TrimStart('/', '\')
-    $backupPath = "$BackupDir/$timestamp/$relative"
+    $backupPath = Join-Path $BackupDir $timestamp $relative
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $backupPath) | Out-Null
     Write-Log -Message "Backing up existing $resolvedTarget -> $backupPath"
     Move-Item -Path $resolvedTarget -Destination $backupPath -Force

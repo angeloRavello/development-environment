@@ -12,7 +12,7 @@
 # builds get pulled once a newer one ships. Confirmed all five versions
 # below resolve via `mise latest java@temurin-<N>` before writing this.
 $ErrorActionPreference = "Stop"
-. "$PSScriptRoot/../bootstrap/common.ps1"
+. (Join-Path $PSScriptRoot ".." "bootstrap" "common.ps1")
 
 $versions = @("temurin-8", "temurin-11", "temurin-17", "temurin-21", "temurin-25")
 $default = "temurin-25"

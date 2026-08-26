@@ -7,7 +7,7 @@
 #            install location (~/.local/bin/mise) - see the comment below
 #            for why that's the one exception to the InstallDir convention.
 $ErrorActionPreference = "Stop"
-. "$PSScriptRoot/../bootstrap/common.ps1"
+. (Join-Path $PSScriptRoot ".." "bootstrap" "common.ps1")
 
 $homeDir = $null
 if ($IsWindows) { $homeDir = $env:USERPROFILE }
@@ -19,7 +19,7 @@ if ($IsLinux) { $miseBinName = "mise" }
 
 if ($IsWindows) {
   $paths = Get-BootstrapPaths
-  $installSubDir = "$($paths.InstallDir)/mise"
+  $installSubDir = Join-Path $paths.InstallDir "mise"
   $exe = $null
   $found = Get-ChildItem -Path $installSubDir -Recurse -Filter $miseBinName -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($found) { $exe = $found.FullName }
@@ -41,7 +41,7 @@ if ($IsWindows) {
   Add-UserPath (Split-Path -Parent $exe)
 }
 if ($IsLinux) {
-  $exe = "$homeDir/.local/bin/$miseBinName"
+  $exe = Join-Path $homeDir ".local" "bin" $miseBinName
   Write-Log -Tag "mise" -Message "Target executable: $exe"
 
   if (Test-Path $exe) {
@@ -58,14 +58,14 @@ if ($IsLinux) {
     Invoke-ExternalCommand -Exe "bash" -Arguments @("-c", "curl -fsSL --max-time 300 https://mise.run | sh") -Label "mise official installer"
   }
 
-  Add-UserPath "$homeDir/.local/bin"
+  Add-UserPath (Join-Path $homeDir ".local" "bin")
 }
 
 if (-not (Test-Path $exe)) {
   throw "mise did not end up at the expected path $exe after installation"
 }
 
-Add-UserPath "$homeDir/.local/share/mise/shims"
+Add-UserPath (Join-Path $homeDir ".local" "share" "mise" "shims")
 
 Write-Log -Tag "mise" -Message "Verifying installation"
 & $exe --version

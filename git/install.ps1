@@ -6,22 +6,22 @@
 #   Linux:   apt (sudo) if available; otherwise prints manual instructions -
 #            most Ubuntu images already ship git, so this is usually a no-op.
 $ErrorActionPreference = "Stop"
-. "$PSScriptRoot/../bootstrap/common.ps1"
+. (Join-Path $PSScriptRoot ".." "bootstrap" "common.ps1")
 
 $paths = Get-BootstrapPaths
 
 if (Get-Command git -ErrorAction SilentlyContinue) {
   Write-Log -Tag "git" -Message "Already available: $(git --version)"
 } elseif ($IsWindows) {
-  $destDir = "$($paths.InstallDir)/git"
-  $gitExe = "$destDir/cmd/git.exe"
+  $destDir = Join-Path $paths.InstallDir "git"
+  $gitExe = Join-Path $destDir "cmd" "git.exe"
 
   Write-Log -Tag "git" -Message "Target executable: $gitExe"
 
   Write-Log -Tag "git" -Message "Downloading portable Git for Windows"
   $url = Get-LatestGithubAsset -Repo "git-for-windows/git" -Pattern '^PortableGit-.*-64-bit\.7z\.exe$'
   $sfxFileName = Split-Path -Leaf ([Uri]$url).AbsolutePath
-  $sfx = "$($paths.DownloadsDir)/$sfxFileName"
+  $sfx = Join-Path $paths.DownloadsDir $sfxFileName
   if (Test-Path $sfx) {
     Write-Log -Tag "git" -Message "Already downloaded at $sfx - skipping download"
   } else {
@@ -56,7 +56,7 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
   try { & ".\post-install.bat" 2>&1 | Out-Null } catch { }
   Pop-Location
 
-  Add-UserPath "$destDir/cmd"
+  Add-UserPath (Join-Path $destDir "cmd")
   Write-Log -Tag "git" -Message "Verifying installation"
   & $gitExe --version
 } elseif ($IsLinux) {
@@ -84,4 +84,4 @@ Options:
   & git --version
 }
 
-Sync-DotLink -Source "$PSScriptRoot/gitconfig" -Target "~/.gitconfig" -BackupDir $paths.BackupDir
+Sync-DotLink -Source (Join-Path $PSScriptRoot "gitconfig") -Target "~/.gitconfig" -BackupDir $paths.BackupDir
