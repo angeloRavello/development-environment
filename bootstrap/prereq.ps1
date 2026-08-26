@@ -21,17 +21,27 @@
 
 $ErrorActionPreference = "Stop"
 
-# Same "[yyyy-MM-dd HH:mm:ss.fff] [LEVEL] [tag] message" format every other
-# script in this repo uses (bootstrap/common.ps1's Write-Log) - duplicated
-# here in its own tiny form since this script can't dot-source common.ps1
-# (see the header comment above for why).
+# Same "[yyyy-MM-dd HH:mm:ss.fff] [LEVEL] [tag] message" format (and same
+# WARN=yellow/ERROR=red coloring) every other script in this repo uses
+# (bootstrap/common.ps1's Write-Log) - duplicated here in its own tiny form
+# since this script can't dot-source common.ps1 (see the header comment
+# above for why). Ternary/?? aren't available here (Windows PowerShell 5.1,
+# not pwsh7), which is why this stays if/else instead of matching
+# Write-Log's exact syntax.
 function Write-Log {
   param(
     [Parameter(Mandatory)][string]$Message,
     [ValidateSet("INFO", "WARN", "ERROR")][string]$Level = "INFO"
   )
   $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
-  Write-Host "[$timestamp] [$($Level.PadRight(5))] [prereq] $Message"
+  $line = "[$timestamp] [$($Level.PadRight(5))] [prereq] $Message"
+  if ($Level -eq "WARN") {
+    Write-Host $line -ForegroundColor Yellow
+  } elseif ($Level -eq "ERROR") {
+    Write-Host $line -ForegroundColor Red
+  } else {
+    Write-Host $line
+  }
 }
 
 Write-Log "Running under Windows PowerShell $($PSVersionTable.PSVersion) (this is expected - pwsh7 is not installed yet)"

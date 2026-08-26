@@ -10,7 +10,7 @@ Invoke-ExternalCommand -Exe "mise" -Arguments @("use", "--global", "neovim") -La
 $homeDir = $null
 if ($IsWindows) { $homeDir = $env:USERPROFILE }
 if ($IsLinux) { $homeDir = $HOME }
-$xdgConfigHome = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { "$homeDir/.config" }
+$xdgConfigHome = $env:XDG_CONFIG_HOME ?? "$homeDir/.config"
 $nvimConfig = "$xdgConfigHome/nvim"
 
 Write-Log -Tag "neovim" -Message "Config target: $nvimConfig"

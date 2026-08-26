@@ -42,8 +42,8 @@ function Set-ManagedBlock {
 
   if ($beginIdx -ge 0 -and $endIdx -gt $beginIdx) {
     Write-Log -Tag "yazi" -Message "Updating existing managed block in $ProfilePath"
-    $before = if ($beginIdx -gt 0) { $existing[0..($beginIdx - 1)] } else { @() }
-    $after = if ($endIdx -lt $existing.Count - 1) { $existing[($endIdx + 1)..($existing.Count - 1)] } else { @() }
+    $before = $beginIdx -gt 0 ? $existing[0..($beginIdx - 1)] : @()
+    $after = $endIdx -lt $existing.Count - 1 ? $existing[($endIdx + 1)..($existing.Count - 1)] : @()
     @($before + $block + $after) | Set-Content -Path $ProfilePath
   } else {
     Write-Log -Tag "yazi" -Message "Appending managed block to $ProfilePath"

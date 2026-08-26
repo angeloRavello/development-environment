@@ -66,8 +66,13 @@ if ($IsLinux) {
   } catch {
     throw "Timed out or failed downloading $url (offline? behind a proxy/firewall?): $($_.Exception.Message)"
   }
-  & chmod +x $appImage
-  & ln -sf $appImage "$destDir/wezterm"
+  # && (PS7 pipeline chain operator): only symlink if chmod actually
+  # succeeded, instead of silently proceeding on a failed chmod like a
+  # plain sequence of two statements would.
+  chmod +x $appImage && ln -sf $appImage "$destDir/wezterm"
+  if (-not (Test-Path "$destDir/wezterm")) {
+    throw "chmod +x / ln -sf on $appImage did not produce $destDir/wezterm - see the raw chmod/ln output above"
+  }
   Add-UserPath $destDir
 
   Write-Log -Tag "wezterm" -Message "Verifying installation"

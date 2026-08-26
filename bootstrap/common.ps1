@@ -16,7 +16,10 @@
 # consecutive lines and see exactly how long the gap between them was,
 # which is the main tool for figuring out where a hang or a slow step is
 # when something goes wrong. Level is one of INFO/WARN/ERROR, padded to a
-# fixed width so lines stay aligned in the terminal.
+# fixed width so lines stay aligned in the terminal, and color-coded
+# (Yellow/Red) so a WARN/ERROR jumps out when scanning a long scrollback -
+# `-ForegroundColor` renders correctly in both Windows Terminal and Linux
+# terminals under pwsh7.
 function Write-Log {
   param(
     [Parameter(Mandatory)][string]$Message,
@@ -24,8 +27,12 @@ function Write-Log {
     [string]$Tag = "common"
   )
   $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
-  $paddedLevel = $Level.PadRight(5)
-  Write-Host "[$timestamp] [$paddedLevel] [$Tag] $Message"
+  $line = "[$timestamp] [$($Level.PadRight(5))] [$Tag] $Message"
+  switch ($Level) {
+    "WARN"  { Write-Host $line -ForegroundColor Yellow }
+    "ERROR" { Write-Host $line -ForegroundColor Red }
+    default { Write-Host $line }
+  }
 }
 
 # Runs $Action as a named, timed stage: logs when it starts, how long it
@@ -131,9 +138,9 @@ function Get-BootstrapPaths {
   $osSuffix = $null
   if ($IsWindows) { $osSuffix = "_WINDOWS" }
   if ($IsLinux) { $osSuffix = "_LINUX" }
-  $downloadsRaw = if ($raw.ContainsKey("DOWNLOADS_DIR$osSuffix")) { $raw["DOWNLOADS_DIR$osSuffix"] } else { $raw['DOWNLOADS_DIR'] }
-  $installRaw = if ($raw.ContainsKey("INSTALL_DIR$osSuffix")) { $raw["INSTALL_DIR$osSuffix"] } else { $raw['INSTALL_DIR'] }
-  $backupRaw = if ($raw.ContainsKey("BACKUP_DIR$osSuffix")) { $raw["BACKUP_DIR$osSuffix"] } else { $raw['BACKUP_DIR'] }
+  $downloadsRaw = $raw.ContainsKey("DOWNLOADS_DIR$osSuffix") ? $raw["DOWNLOADS_DIR$osSuffix"] : $raw['DOWNLOADS_DIR']
+  $installRaw = $raw.ContainsKey("INSTALL_DIR$osSuffix") ? $raw["INSTALL_DIR$osSuffix"] : $raw['INSTALL_DIR']
+  $backupRaw = $raw.ContainsKey("BACKUP_DIR$osSuffix") ? $raw["BACKUP_DIR$osSuffix"] : $raw['BACKUP_DIR']
 
   $downloadsDir = Resolve-ConfiguredPath -Value $downloadsRaw -HomeDir $homeDir -KeyName "DOWNLOADS_DIR"
   $installDir = Resolve-ConfiguredPath -Value $installRaw -HomeDir $homeDir -KeyName "INSTALL_DIR"
@@ -166,8 +173,8 @@ function Get-LatestGithubAsset {
     [string]$Tag,                            # optional: e.g. "nightly" - fetches /releases/tags/<Tag> instead of /releases/latest
     [int]$TimeoutSec = 30
   )
-  $uri = if ($Tag) { "https://api.github.com/repos/$Repo/releases/tags/$Tag" } else { "https://api.github.com/repos/$Repo/releases/latest" }
-  $what = if ($Tag) { "tag '$Tag'" } else { "latest release" }
+  $uri = $Tag ? "https://api.github.com/repos/$Repo/releases/tags/$Tag" : "https://api.github.com/repos/$Repo/releases/latest"
+  $what = $Tag ? "tag '$Tag'" : "latest release"
   Write-Log -Message "Querying GitHub API for $what of $Repo (timeout ${TimeoutSec}s)"
   try {
     $release = Invoke-RestMethod -UseBasicParsing -TimeoutSec $TimeoutSec -Uri $uri -Headers @{ "User-Agent" = "dotfiles-bootstrap" }
@@ -284,7 +291,7 @@ function Add-UserPath {
     $parts = @()
     if ($current) { $parts = $current -split ";" }
     if (-not ($parts -contains $Dir)) {
-      $new = if ($current) { "$current;$Dir" } else { $Dir }
+      $new = $current ? "$current;$Dir" : $Dir
       [Environment]::SetEnvironmentVariable("Path", $new, "User")
       Write-Log -Message "-> written to HKCU\Environment\Path"
     } else {
@@ -378,7 +385,7 @@ function Sync-DotLink {
   $homeDir = $null
   if ($IsWindows) { $homeDir = $env:USERPROFILE }
   if ($IsLinux) { $homeDir = $HOME }
-  $resolvedTarget = if ($Target.StartsWith("~")) { $homeDir + $Target.Substring(1) } else { $Target }
+  $resolvedTarget = $Target.StartsWith("~") ? ($homeDir + $Target.Substring(1)) : $Target
 
   if (-not (Test-Path $Source)) {
     Write-Log -Level "WARN" -Message "Sync-DotLink source $Source does not exist - skipping"

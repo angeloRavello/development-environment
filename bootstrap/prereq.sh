@@ -16,15 +16,21 @@
 # every tool's install.ps1, all pwsh7).
 set -euo pipefail
 
-# Same "[yyyy-MM-dd HH:mm:ss.fff] [LEVEL] [tag] message" format every other
-# script in this repo uses (bootstrap/common.ps1's Write-Log) - duplicated
-# here in its own tiny form since this script can't dot-source common.ps1
-# (see the header comment above for why). Requires GNU date (%3N for
-# milliseconds), which ships by default on Ubuntu.
+# Same "[yyyy-MM-dd HH:mm:ss.fff] [LEVEL] [tag] message" format (and same
+# WARN=yellow/ERROR=red coloring) every other script in this repo uses
+# (bootstrap/common.ps1's Write-Log) - duplicated here in its own tiny form
+# since this script can't dot-source common.ps1 (see the header comment
+# above for why). Requires GNU date (%3N for milliseconds), which ships by
+# default on Ubuntu.
 log() {
-  local level="INFO" message
+  local level="INFO" message color="" reset=""
   if [ "$#" -ge 2 ]; then level="$1"; message="$2"; else message="$1"; fi
-  printf '[%s] [%-5s] [prereq] %s\n' "$(date '+%Y-%m-%d %H:%M:%S.%3N')" "$level" "$message"
+  case "$level" in
+    WARN)  color='\033[0;33m' ;;
+    ERROR) color='\033[0;31m' ;;
+  esac
+  [ -n "$color" ] && reset='\033[0m'
+  printf '%b[%s] [%-5s] [prereq] %s%b\n' "$color" "$(date '+%Y-%m-%d %H:%M:%S.%3N')" "$level" "$message" "$reset"
 }
 
 log "Running under bash $BASH_VERSION (pwsh7 is not installed yet)"
