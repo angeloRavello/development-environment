@@ -50,6 +50,32 @@ if ($IsWindows) {
   Add-UserPath $destDir
   Write-Log -Tag "wezterm" -Message "Verifying installation"
   & $exe --version
+
+  # A portable .exe isn't indexed by Windows Search on its own - only
+  # things with a shortcut (.lnk) somewhere Windows looks, like the
+  # per-user Start Menu Programs folder, are. Creating one there (no admin
+  # needed, it's a per-user folder) is what actually makes "wezterm" show
+  # up when you search the Start menu.
+  $startMenuPrograms = Join-Path $env:APPDATA "Microsoft" "Windows" "Start Menu" "Programs"
+  $shortcutPath = Join-Path $startMenuPrograms "WezTerm.lnk"
+  Write-Log -Tag "wezterm" -Message "Creating Start Menu shortcut: $shortcutPath"
+  $wshShell = New-Object -ComObject WScript.Shell
+  $shortcut = $wshShell.CreateShortcut($shortcutPath)
+  $shortcut.TargetPath = $exe
+  $shortcut.WorkingDirectory = $destDir
+  $shortcut.Description = "WezTerm - GPU-accelerated cross-platform terminal emulator"
+  $shortcut.IconLocation = $exe
+  $shortcut.Save()
+
+  # Pinning to the TASKBAR, unlike Start Menu search, can't be automated on
+  # modern Windows - Microsoft removed the scriptable "Pin to taskbar"
+  # shell verb starting with Windows 10 2004 specifically so installers
+  # can't silently modify the taskbar, and there's no supported replacement
+  # for a plain portable .exe like this one (the newer pin API only exists
+  # for a packaged app to pin itself). So: one manual click, once, ever -
+  # not something any script can do for you on current Windows.
+  Write-Log -Tag "wezterm" -Message "Shortcut created - WezTerm now shows up in Windows Search."
+  Write-Log -Tag "wezterm" -Message "To pin it to the taskbar: search 'WezTerm' in the Start menu, right-click the result, choose 'Pin to taskbar'. This one step can't be scripted - Windows blocks taskbar changes from anything but the user."
 }
 if ($IsLinux) {
   New-Item -ItemType Directory -Force -Path $destDir | Out-Null

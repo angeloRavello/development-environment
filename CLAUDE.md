@@ -27,7 +27,7 @@ bootstrap/
   bootstrap.ps1  - pwsh7 orchestrator: fixed stage order (see below), logging, summary
   common.ps1     - shared functions, see next section
   paths.env      - DOWNLOADS_DIR/INSTALL_DIR/BACKUP_DIR config (see below)
-<tool>/          - git, mise, wezterm, python, rust, zig, java, yazi, neovim
+<tool>/          - git, mise, wezterm, windows-terminal, python, rust, zig, java, yazi, neovim
   install.ps1    - installs the tool + deploys its own config via Sync-DotLink
   <config files> - whatever that tool's install.ps1 deploys (e.g. git/gitconfig)
 ```
@@ -48,7 +48,7 @@ bootstrap/
    1. Environment variables (`$env:DOTFILES`; Windows-only `XDG_*`).
    2. **mise** — hard dependency (no `-ContinueOnError`): python/rust/zig/java/yazi/neovim all need it, so a failure here throws and aborts the whole script instead of cascading into confusing downstream failures.
    3. **git** — also hard: neovim's stage needs `git` on PATH.
-   4. `$softStages` (ordered hashtable, `-ContinueOnError`): `wezterm`, `python`, `rust`, `zig`, `java`, `yazi`, `neovim` — in that literal order. `neovim` is last because it's the one stage needing both hard dependencies above. Add new tools to this hashtable, in dependency order relative to whatever they need.
+   4. `$softStages` (ordered hashtable, `-ContinueOnError`): `wezterm`, `windows-terminal`, `python`, `rust`, `zig`, `java`, `yazi`, `neovim` — in that literal order. `windows-terminal` no-ops on Linux (nothing to configure there). `neovim` is last because it's the one stage needing both hard dependencies above. Add new tools to this hashtable, in dependency order relative to whatever they need.
    5. Summary: per-stage `OK`/`FAILED` plus total elapsed, from the `$results` collected by each `Invoke-Stage` call.
 
 If you add a tool whose failure would make everything after it pointless (like mise/git), give it its own `Invoke-Stage` call with no `-ContinueOnError`, placed before `$softStages`, not inside the hashtable.

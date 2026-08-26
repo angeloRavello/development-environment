@@ -18,11 +18,13 @@
                     bootstrap on failure instead of continuing.
     3. git        - also a hard dependency: neovim's install step needs
                     `git` on PATH to clone LazyVim.
-    4. wezterm, python, rust, zig, java, yazi, neovim, in that order -
-       "soft" stages: a failure here is logged and the bootstrap keeps
-       going (matching the old `rotz install --continue-on-error`
-       behavior), since none of these block each other. neovim is last
-       because it depends on both mise (Stage 2) and git (Stage 3).
+    4. wezterm, windows-terminal, python, rust, zig, java, yazi, neovim, in
+       that order - "soft" stages: a failure here is logged and the
+       bootstrap keeps going (matching the old `rotz install
+       --continue-on-error` behavior), since none of these block each
+       other. windows-terminal no-ops on Linux (nothing to configure);
+       neovim is last because it depends on both mise (Stage 2) and git
+       (Stage 3).
 
   Every stage is run through Invoke-Stage (bootstrap/common.ps1), which
   logs a start line, an end line with elapsed time, and - on failure - an
@@ -89,13 +91,14 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 
 # --- Remaining stages: soft dependencies, explicit fixed order, continue past failures ---
 $softStages = [ordered]@{
-  "wezterm" = { & (Join-Path $RepoRoot "wezterm" "install.ps1") }
-  "python"  = { & (Join-Path $RepoRoot "python" "install.ps1") }
-  "rust"    = { & (Join-Path $RepoRoot "rust" "install.ps1") }
-  "zig"     = { & (Join-Path $RepoRoot "zig" "install.ps1") }
-  "java"    = { & (Join-Path $RepoRoot "java" "install.ps1") }
-  "yazi"    = { & (Join-Path $RepoRoot "yazi" "install.ps1") }
-  "neovim"  = { & (Join-Path $RepoRoot "neovim" "install.ps1") }   # last: needs both mise and git
+  "wezterm"          = { & (Join-Path $RepoRoot "wezterm" "install.ps1") }
+  "windows-terminal" = { & (Join-Path $RepoRoot "windows-terminal" "install.ps1") }   # Windows-only; no-ops on Linux
+  "python"           = { & (Join-Path $RepoRoot "python" "install.ps1") }
+  "rust"             = { & (Join-Path $RepoRoot "rust" "install.ps1") }
+  "zig"              = { & (Join-Path $RepoRoot "zig" "install.ps1") }
+  "java"             = { & (Join-Path $RepoRoot "java" "install.ps1") }
+  "yazi"             = { & (Join-Path $RepoRoot "yazi" "install.ps1") }
+  "neovim"           = { & (Join-Path $RepoRoot "neovim" "install.ps1") }   # last: needs both mise and git
 }
 
 foreach ($stageName in $softStages.Keys) {
