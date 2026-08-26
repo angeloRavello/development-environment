@@ -135,4 +135,13 @@ if ($IsLinux) {
   & $wezSymlink --version
 }
 
+# wezterm.lua `require`s platform.lua/windows.lua/linux.lua relative to
+# its own directory, so all four have to land together in
+# ~/.config/wezterm/ - deployed as four separate Sync-DotLink calls rather
+# than one directory link (matching how every other multi-file tool config
+# in this repo - e.g. yazi's three .toml files - is deployed one file at a
+# time), so each file gets its own up-to-date check/backup independently.
 Sync-DotLink -Source (Join-Path $PSScriptRoot "wezterm.lua") -Target "~/.config/wezterm/wezterm.lua" -BackupDir $paths.BackupDir
+Sync-DotLink -Source (Join-Path $PSScriptRoot "platform.lua") -Target "~/.config/wezterm/platform.lua" -BackupDir $paths.BackupDir
+Sync-DotLink -Source (Join-Path $PSScriptRoot "windows.lua") -Target "~/.config/wezterm/windows.lua" -BackupDir $paths.BackupDir
+Sync-DotLink -Source (Join-Path $PSScriptRoot "linux.lua") -Target "~/.config/wezterm/linux.lua" -BackupDir $paths.BackupDir
