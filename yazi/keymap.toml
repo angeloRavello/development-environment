@@ -6,3 +6,9 @@
 # on = ["g", "h"]
 # run = "cd ~"
 # desc = "Go home"
+#
+# On Windows, ../install.ps1 appends a "g" + <DRIVE LETTER> entry here for
+# every fixed drive it finds on the machine being bootstrapped (e.g.
+# "g C" -> cd C:\) before deploying this file - not written here directly,
+# since the drives on THIS machine aren't necessarily the drives on any
+# other machine this repo gets cloned onto.

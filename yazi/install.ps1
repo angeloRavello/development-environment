@@ -14,8 +14,40 @@ Invoke-ExternalCommand -Exe "mise" -Arguments @("use", "--global", "yazi") -Labe
 
 $paths = Get-BootstrapPaths
 Sync-DotLink -Source (Join-Path $PSScriptRoot "yazi.toml") -Target "~/.config/yazi/yazi.toml" -BackupDir $paths.BackupDir
-Sync-DotLink -Source (Join-Path $PSScriptRoot "keymap.toml") -Target "~/.config/yazi/keymap.toml" -BackupDir $paths.BackupDir
 Sync-DotLink -Source (Join-Path $PSScriptRoot "theme.toml") -Target "~/.config/yazi/theme.toml" -BackupDir $paths.BackupDir
+
+# keymap.toml: on Windows, append a "g" + <DRIVE LETTER> jump for every
+# FIXED drive actually present on THIS machine (e.g. "g C" -> cd C:\) -
+# generated here at install time, not hardcoded in the tracked file,
+# since a different machine running this same repo could have completely
+# different drive letters. yazi's config is plain TOML with no scripting
+# (unlike wezterm.lua/java.lua, both Lua), so there's no way for yazi
+# itself to detect drives at its own runtime - this has to happen here.
+#
+# Uppercase second key (g + Shift+C, not g + c) deliberately: checked
+# yazi's real default keymap
+# (github.com/sxyazi/yazi/blob/main/yazi-config/preset/keymap-default.toml)
+# before picking this - lowercase "g c" is already bound to cd ~/.config
+# and "g d" to cd ~/Downloads, so lowercase drive letters would have
+# silently overridden those.
+$keymapSource = Join-Path $PSScriptRoot "keymap.toml"
+if ($IsWindows) {
+  $driveBlocks = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq "Fixed" -and $_.IsReady } | ForEach-Object {
+    $letter = $_.Name.Substring(0, 1).ToUpper()
+    Write-Log -Tag "yazi" -Message "Drive shortcut: g $letter -> $($_.Name)"
+    @"
+[[mgr.prepend_keymap]]
+on = [ "g", "$letter" ]
+run = "cd ${letter}:\\"
+desc = "Go to ${letter}:\\"
+"@
+  }
+  $generatedKeymap = Join-Path ([System.IO.Path]::GetTempPath()) "yazi-keymap-with-drives.toml"
+  $combined = (Get-Content -Path $keymapSource -Raw) + "`n`n" + ($driveBlocks -join "`n`n")
+  Set-Content -Path $generatedKeymap -Value $combined -Encoding utf8 -NoNewline
+  $keymapSource = $generatedKeymap
+}
+Sync-DotLink -Source $keymapSource -Target "~/.config/yazi/keymap.toml" -BackupDir $paths.BackupDir
 
 # Idempotently writes $Content between two marker comment lines in
 # $ProfilePath: if the markers are already there (from a previous run),
