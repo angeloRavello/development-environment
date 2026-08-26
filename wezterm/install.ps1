@@ -44,16 +44,34 @@ if ($IsWindows) {
   $url = Get-LatestGithubAsset -Repo "wezterm/wezterm" -Tag "nightly" -Pattern '^WezTerm-windows-nightly\.zip$'
   Install-PortableZip -Url $url -DestDir $destDir -DownloadsDir $paths.DownloadsDir -Force
 
-  # Some releases nest everything under a single subfolder - flatten it so
-  # both executables always end up directly in $destDir.
-  if (-not (Test-Path $exe)) {
-    $found = Get-ChildItem -Path $destDir -Recurse -Filter "wezterm.exe" | Select-Object -First 1
-    if (-not $found) { throw "wezterm.exe not found after extracting WezTerm nightly zip (searched $destDir)" }
-    $inner = $found.Directory
+  # The zip nests everything under a subfolder whose name embeds a
+  # build-specific date+hash - a DIFFERENT name on every nightly build, so
+  # a fresh nested folder appears on every single re-run (-Force above
+  # means every run re-extracts). This must flatten EVERY run, not just
+  # when wezterm.exe is missing at the top level - gating it behind
+  # "already flattened once" (an earlier version of this script did that)
+  # left every later nightly build sitting ignored in its own nested
+  # folder forever, while the top-level wezterm.exe/wezterm-gui.exe
+  # silently stayed on whatever build got flattened the very first time -
+  # quietly defeating "-Force always re-installs to stay current".
+  #
+  # Moved item-by-item (not the whole folder tree in one Move-Item) and
+  # removing any same-named destination first: WezTerm's zip includes its
+  # own subfolders (e.g. "mesa"), and Move-Item refuses to move a
+  # directory onto an already-existing same-named directory - which every
+  # subfolder is, from the previous run's flatten - so a straight
+  # "Move-Item -Force" would throw on the second run onward.
+  Get-ChildItem -Path $destDir -Directory | Where-Object { Test-Path (Join-Path $_.FullName "wezterm.exe") } | ForEach-Object {
+    $inner = $_
     Write-Log -Tag "wezterm" -Message "Flattening nested folder $($inner.FullName) into $destDir"
-    Get-ChildItem -Path $inner.FullName | Move-Item -Destination $destDir -Force
-    if ($inner.FullName -ne $destDir) { Remove-Item $inner.FullName -Recurse -Force }
+    foreach ($item in Get-ChildItem -Path $inner.FullName) {
+      $target = Join-Path $destDir $item.Name
+      if (Test-Path $target) { Remove-Item -Path $target -Recurse -Force }
+      Move-Item -Path $item.FullName -Destination $destDir -Force
+    }
+    Remove-Item $inner.FullName -Recurse -Force
   }
+  if (-not (Test-Path $exe)) { throw "wezterm.exe not found in $destDir after extracting/flattening WezTerm nightly zip" }
   if (-not (Test-Path $guiExe)) {
     throw "wezterm-gui.exe not found after extracting WezTerm nightly zip (searched $destDir) - this is the executable the Start Menu shortcut below points at"
   }
