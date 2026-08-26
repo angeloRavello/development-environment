@@ -31,13 +31,21 @@ $paths = Get-BootstrapPaths
 $destDir = Join-Path $paths.InstallDir "wezterm"
 
 if ($IsWindows) {
+  # The Windows zip ships two relevant executables: wezterm.exe (console-
+  # subsystem CLI wrapper - `wezterm cli ...`, `wezterm start`, etc.) and
+  # wezterm-gui.exe (GUI-subsystem binary - the actual terminal window).
+  # Launching wezterm.exe directly to open the terminal flashes/leaves a
+  # console window behind it; wezterm-gui.exe is the one meant to be
+  # launched directly (shortcut, taskbar, double-click). Both are kept on
+  # PATH; only wezterm-gui.exe is used as the shortcut target below.
   $exe = Join-Path $destDir "wezterm.exe"
+  $guiExe = Join-Path $destDir "wezterm-gui.exe"
   Write-Log -Tag "wezterm" -Message "Installing nightly build to $destDir"
   $url = Get-LatestGithubAsset -Repo "wezterm/wezterm" -Tag "nightly" -Pattern '^WezTerm-windows-nightly\.zip$'
   Install-PortableZip -Url $url -DestDir $destDir -DownloadsDir $paths.DownloadsDir -Force
 
   # Some releases nest everything under a single subfolder - flatten it so
-  # wezterm.exe always ends up directly in $destDir.
+  # both executables always end up directly in $destDir.
   if (-not (Test-Path $exe)) {
     $found = Get-ChildItem -Path $destDir -Recurse -Filter "wezterm.exe" | Select-Object -First 1
     if (-not $found) { throw "wezterm.exe not found after extracting WezTerm nightly zip (searched $destDir)" }
@@ -45,6 +53,9 @@ if ($IsWindows) {
     Write-Log -Tag "wezterm" -Message "Flattening nested folder $($inner.FullName) into $destDir"
     Get-ChildItem -Path $inner.FullName | Move-Item -Destination $destDir -Force
     if ($inner.FullName -ne $destDir) { Remove-Item $inner.FullName -Recurse -Force }
+  }
+  if (-not (Test-Path $guiExe)) {
+    throw "wezterm-gui.exe not found after extracting WezTerm nightly zip (searched $destDir) - this is the executable the Start Menu shortcut below points at"
   }
 
   Add-UserPath $destDir
@@ -61,10 +72,10 @@ if ($IsWindows) {
   Write-Log -Tag "wezterm" -Message "Creating Start Menu shortcut: $shortcutPath"
   $wshShell = New-Object -ComObject WScript.Shell
   $shortcut = $wshShell.CreateShortcut($shortcutPath)
-  $shortcut.TargetPath = $exe
+  $shortcut.TargetPath = $guiExe
   $shortcut.WorkingDirectory = $destDir
   $shortcut.Description = "WezTerm - GPU-accelerated cross-platform terminal emulator"
-  $shortcut.IconLocation = $exe
+  $shortcut.IconLocation = $guiExe
   $shortcut.Save()
 
   # Pinning to the TASKBAR, unlike Start Menu search, can't be automated on
