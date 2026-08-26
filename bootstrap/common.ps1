@@ -22,7 +22,7 @@
 # terminals under pwsh7.
 function Write-Log {
   param(
-    [Parameter(Mandatory)][string]$Message,
+    [Parameter(Mandatory)][AllowEmptyString()][string]$Message,
     [ValidateSet("INFO", "WARN", "ERROR")][string]$Level = "INFO",
     [string]$Tag = "common"
   )
