@@ -8,6 +8,15 @@ A dotfiles + machine-bootstrap repo. One command sets up a brand new Windows 11 
 
 There is no build, lint, or test suite — this is configuration, not application code. "Testing" a change means running the relevant bootstrap script (or a single tool's `install.ps1`) on a real or scratch machine/VM and confirming the tool installs and configs get deployed. When you can't run a real bootstrap, at minimum parse-check every touched `.ps1` (`[System.Management.Automation.Language.Parser]::ParseFile`) and, where feasible, exercise the changed function against an isolated fixture (temp dir standing in for `$HOME`/the repo) rather than the real environment — this repo's history includes several bugs (a bash `case` backslash-escaping bug, a broken `--force` re-download flag) that were only caught by actually running the code, not by reading it.
 
+## Commands
+
+- **Full bootstrap, fresh machine (Windows, non-admin PowerShell):** `powershell -ExecutionPolicy Bypass -File .\bootstrap\prereq.ps1`
+- **Full bootstrap, fresh machine (Linux):** `bash bootstrap/prereq.sh`
+- **Re-run the orchestrator directly** (pwsh7 already on PATH, skips the prereq step): `pwsh bootstrap/bootstrap.ps1`
+- **Test one tool in isolation** (fastest inner loop when editing a single `install.ps1`): `pwsh <tool>/install.ps1`, e.g. `pwsh wezterm/install.ps1`
+- **Parse-check a script without running it:** `pwsh -Command "[System.Management.Automation.Language.Parser]::ParseFile('<path>', [ref]$null, [ref]$null)"` — any parse errors land in the second `[ref]` output
+- Always open a **new terminal** after a bootstrap run before verifying PATH/env var changes — they're written to `HKCU\Environment` / shell profiles, not the current process.
+
 ## No external orchestration tool — this repo used to use rotz, and no longer does
 
 Every script here is PowerShell 7 (`pwsh`), including the orchestration itself: `bootstrap/bootstrap.ps1` calls each tool's `install.ps1` directly, in a fixed, explicit, hardcoded order — there is no dependency-manifest file (no `dot.yaml`, no `config.yaml`) and no generic dependency resolver.
@@ -27,7 +36,7 @@ bootstrap/
   bootstrap.ps1  - pwsh7 orchestrator: fixed stage order (see below), logging, summary
   common.ps1     - shared functions, see next section
   paths.env      - DOWNLOADS_DIR/INSTALL_DIR/BACKUP_DIR config (see below)
-<tool>/          - git, mise, wezterm, windows-terminal, python, rust, zig, java, yazi, neovim
+<tool>/          - git, mise, wezterm, windows-terminal, atac, python, rust, zig, java, yazi, neovim
   install.ps1    - installs the tool + deploys its own config via Sync-DotLink
   <config files> - whatever that tool's install.ps1 deploys (e.g. git/gitconfig)
 ```
@@ -48,7 +57,7 @@ bootstrap/
    1. Environment variables (`$env:DOTFILES`; Windows-only `XDG_*`).
    2. **mise** — hard dependency (no `-ContinueOnError`): python/rust/zig/java/yazi/neovim all need it, so a failure here throws and aborts the whole script instead of cascading into confusing downstream failures.
    3. **git** — also hard: neovim's stage needs `git` on PATH.
-   4. `$softStages` (ordered hashtable, `-ContinueOnError`): `wezterm`, `windows-terminal`, `python`, `rust`, `zig`, `java`, `yazi`, `neovim` — in that literal order. `windows-terminal` no-ops on Linux (nothing to configure there). `neovim` is last because it's the one stage needing both hard dependencies above. Add new tools to this hashtable, in dependency order relative to whatever they need.
+   4. `$softStages` (ordered hashtable, `-ContinueOnError`): `wezterm`, `windows-terminal`, `atac`, `python`, `rust`, `zig`, `java`, `yazi`, `neovim` — in that literal order. `windows-terminal` no-ops on Linux (nothing to configure there). `neovim` is last because it's the one stage needing both hard dependencies above. Add new tools to this hashtable, in dependency order relative to whatever they need.
    5. Summary: per-stage `OK`/`FAILED` plus total elapsed, from the `$results` collected by each `Invoke-Stage` call.
 
 If you add a tool whose failure would make everything after it pointless (like mise/git), give it its own `Invoke-Stage` call with no `-ContinueOnError`, placed before `$softStages`, not inside the hashtable.
@@ -117,7 +126,7 @@ Every `Invoke-WebRequest`/`Invoke-RestMethod` call passes an explicit `-TimeoutS
 
 ## Adding a new tool
 
-1. Create `<tool>/install.ps1`: install the binary (mise one-liner if registered, otherwise a portable download with `$IsWindows`/`$IsLinux` branches only where the OSes genuinely differ), then `Sync-DotLink` any config files it owns.
+1. Create `<tool>/install.ps1`: install the binary via a mise one-liner (`mise use --global <tool>` if it has a registry short name; `mise use --global github:<owner>/<repo>` also works for a tool that isn't registry-listed but ships prebuilt GitHub release binaries mise's generic `github:` backend can auto-detect — see `atac/install.ps1`), otherwise a portable download with `$IsWindows`/`$IsLinux` branches only where the OSes genuinely differ (see `git`/`wezterm`, needed because neither ships assets mise's backend can pick automatically). Then `Sync-DotLink` any config files it owns.
 2. Add it to `$softStages` in `bootstrap.ps1` (or as its own hard-dependency `Invoke-Stage` call, before `$softStages`, if something later genuinely can't work without it — like `mise`/`git`).
 3. If cloning a config repo (LazyVim pattern): clone/update first, `Sync-DotLink` your own overrides after, same order every time.
 

@@ -19,6 +19,7 @@ for that; it was removed - see "Why no external tool" below.)
 | `git` | portable download, no admin | `PortableGit-*-64-bit.7z.exe` from git-for-windows | `apt` (sudo) or manual if no sudo |
 | `mise` | portable zip / official installer | `mise-*-windows-x64.zip` | `curl https://mise.run \| sh` |
 | `wezterm` | portable download, **always nightly** (see below) | `WezTerm-windows-nightly.zip` | portable `.AppImage`, nightly (no apt, no sudo) |
+| `atac` | `mise use --global github:Julien-cpsn/ATAC` (mise's generic GitHub-release backend, no registry entry needed) | via mise | via mise |
 | `python`, `rust`, `zig` | `mise use --global <tool>` | via mise | via mise |
 | `java` | `mise install` Eclipse Temurin 8, 11, 17, 21 and 25 side-by-side; 25 set as `mise use --global` default | via mise | via mise |
 | `yazi` | `mise use --global yazi` + config + `y` shell wrapper (see below) | via mise | via mise |
@@ -85,11 +86,11 @@ per-stage start/finish/elapsed lines.
       without it.
    3. **git** - also hard: neovim's stage needs `git` on PATH to
       clone/update LazyVim.
-   4. **wezterm, python, rust, zig, java, yazi, neovim**, in that order -
-      *soft* stages: a failure here is logged and the bootstrap keeps
-      going (same spirit as rotz's old `--continue-on-error`), since none
-      of these block each other. `neovim` is last because it's the one
-      stage that depends on both of the hard ones above.
+   4. **wezterm, atac, python, rust, zig, java, yazi, neovim**, in that
+      order - *soft* stages: a failure here is logged and the bootstrap
+      keeps going (same spirit as rotz's old `--continue-on-error`), since
+      none of these block each other. `neovim` is last because it's the
+      one stage that depends on both of the hard ones above.
    5. A final summary: every stage name with `OK`/`FAILED`, and the total
       elapsed time.
 
