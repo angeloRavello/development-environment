@@ -30,7 +30,13 @@ log() {
     ERROR) color='\033[0;31m' ;;
   esac
   [ -n "$color" ] && reset='\033[0m'
-  printf '%b[%s] [%-5s] [prereq] %s%b\n' "$color" "$(date '+%Y-%m-%d %H:%M:%S.%3N')" "$level" "$message" "$reset"
+  # To stderr, always: get_config_value / resolve_configured_path return
+  # their result on stdout via command substitution, so any log line that
+  # went to stdout would be swallowed into that captured value instead of
+  # reaching the terminal - which is exactly how a fatal "looks like a
+  # Windows path" error from resolve_configured_path used to vanish, the
+  # script just exiting 1 with no message.
+  printf '%b[%s] [%-5s] [prereq] %s%b\n' "$color" "$(date '+%Y-%m-%d %H:%M:%S.%3N')" "$level" "$message" "$reset" >&2
 }
 
 log "Running under bash $BASH_VERSION (pwsh7 is not installed yet)"
