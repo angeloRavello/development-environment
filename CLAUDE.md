@@ -36,7 +36,7 @@ bootstrap/
   bootstrap.ps1  - pwsh7 orchestrator: fixed stage order (see below), logging, summary
   common.ps1     - shared functions, see next section
   paths.env      - DOWNLOADS_DIR/INSTALL_DIR/BACKUP_DIR config (see below)
-<tool>/          - git, mise, wezterm, windows-terminal, atac, python, rust, zig, java, yazi, neovim
+<tool>/          - git, mise, wezterm, windows-terminal, atac, python, rust, zig, java, yazi, tmux, neovim
   install.ps1    - installs the tool + deploys its own config via Sync-DotLink
   <config files> - whatever that tool's install.ps1 deploys (e.g. git/gitconfig)
 ```
@@ -55,9 +55,9 @@ bootstrap/
 1. `prereq.ps1`/`prereq.sh` install pwsh7, then hand off to `bootstrap.ps1`.
 2. `bootstrap.ps1` (pwsh7, both OSes), via `Invoke-Stage` for every step:
    1. Environment variables (`$env:DOTFILES`; Windows-only `XDG_*`).
-   2. **mise** — hard dependency (no `-ContinueOnError`): python/rust/zig/java/yazi/neovim all need it, so a failure here throws and aborts the whole script instead of cascading into confusing downstream failures.
+   2. **mise** — hard dependency (no `-ContinueOnError`): python/rust/zig/java/yazi/tmux/neovim all need it, so a failure here throws and aborts the whole script instead of cascading into confusing downstream failures.
    3. **git** — also hard: neovim's stage needs `git` on PATH.
-   4. `$softStages` (ordered hashtable, `-ContinueOnError`): `wezterm`, `windows-terminal`, `atac`, `python`, `rust`, `zig`, `java`, `yazi`, `neovim` — in that literal order. `windows-terminal` no-ops on Linux (nothing to configure there). `neovim` is last because it's the one stage needing both hard dependencies above. Add new tools to this hashtable, in dependency order relative to whatever they need.
+   4. `$softStages` (ordered hashtable, `-ContinueOnError`): `wezterm`, `windows-terminal`, `atac`, `python`, `rust`, `zig`, `java`, `yazi`, `tmux`, `neovim` — in that literal order. `windows-terminal` no-ops on Linux (nothing to configure there); `tmux` no-ops on Windows (no native build — WezTerm's own multiplexer covers Windows). `neovim` is last because it's the one stage needing both hard dependencies above. Add new tools to this hashtable, in dependency order relative to whatever they need.
    5. Summary: per-stage `OK`/`FAILED` plus total elapsed, from the `$results` collected by each `Invoke-Stage` call.
 
 If you add a tool whose failure would make everything after it pointless (like mise/git), give it its own `Invoke-Stage` call with no `-ContinueOnError`, placed before `$softStages`, not inside the hashtable.
@@ -114,7 +114,7 @@ Every install path in this repo is derived from `$env:USERPROFILE`/`$HOME`, neve
 
 PATH changes on Windows go to the **user** registry hive (`HKCU\Environment`) only, never machine-wide PATH. Any new install script must preserve this — no admin/sudo dependency anywhere it's technically avoidable.
 
-`git` and `wezterm` are fetched directly from GitHub Releases as portable zips/AppImage/self-extracting archives (verified against `github.com/jdx/mise/registry/*.toml` to confirm they aren't in mise's registry) rather than via mise, with `$IsWindows`/`$IsLinux` branches inside a single `install.ps1` (`git` has an apt branch on Linux; `wezterm` does not — see above). `python`/`rust`/`zig` install via a plain `Invoke-ExternalCommand -Exe "mise" -Arguments @("use", "--global", "<tool>")` one-liner install.ps1 — genuinely OS-agnostic, nothing else to do. `neovim` and `yazi` both need more than the mise install itself: `neovim` clones/updates LazyVim (see above), `yazi` adds the `y` shell wrapper. `java` needs multiple JDK versions side-by-side (see below).
+`git` and `wezterm` are fetched directly from GitHub Releases as portable zips/AppImage/self-extracting archives (verified against `github.com/jdx/mise/registry/*.toml` to confirm they aren't in mise's registry) rather than via mise, with `$IsWindows`/`$IsLinux` branches inside a single `install.ps1` (`git` has an apt branch on Linux; `wezterm` does not — see above). `python`/`rust`/`zig` install via a plain `Invoke-ExternalCommand -Exe "mise" -Arguments @("use", "--global", "<tool>")` one-liner install.ps1 — genuinely OS-agnostic, nothing else to do. `neovim` and `yazi` both need more than the mise install itself: `neovim` clones/updates LazyVim (see above), `yazi` adds the `y` shell wrapper. `tmux` is a mise install plus a `Sync-DotLink` of its config, but **Linux only** — it `return`s early on Windows (no native tmux build; WezTerm's built-in multiplexer covers Windows). Its install.ps1 also moves any pre-existing `~/.tmux.conf` into `BackupDir`, since tmux 3.1+ reads `~/.config/tmux/tmux.conf` in preference and a leftover would just be dead config. `java` needs multiple JDK versions side-by-side (see below).
 
 ### Java: multiple JDKs side-by-side
 
