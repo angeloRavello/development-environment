@@ -334,30 +334,37 @@ function Add-UserPath {
 # by hash) or directories whose files all match (same relative paths, same
 # hashes). False if $Target doesn't exist, or differs in any way. Used by
 # Sync-DotLink to decide whether a link needs (re)deploying at all.
+#
+# -Force / -LiteralPath everywhere on purpose: on Linux EVERY target this
+# repo deploys is a dotfile (~/.gitconfig, ~/.config/...), and PowerShell
+# treats a leading-dot name as "hidden" - so a bare `Get-Item ~/.gitconfig`
+# throws "Could not find item" and a bare `Get-ChildItem -Recurse` silently
+# skips every dotfile inside a synced folder. Test-Path still finds hidden
+# items without -Force; Get-Item / Get-ChildItem do not.
 function Test-DotLinkUpToDate {
   param(
     [Parameter(Mandatory)][string]$Source,
     [Parameter(Mandatory)][string]$Target
   )
-  if (-not (Test-Path $Target)) { return $false }
+  if (-not (Test-Path -LiteralPath $Target)) { return $false }
 
-  $sourceIsDir = (Get-Item $Source).PSIsContainer
-  $targetIsDir = (Get-Item $Target).PSIsContainer
+  $sourceIsDir = (Get-Item -Force -LiteralPath $Source).PSIsContainer
+  $targetIsDir = (Get-Item -Force -LiteralPath $Target).PSIsContainer
   if ($sourceIsDir -ne $targetIsDir) { return $false }
 
   if (-not $sourceIsDir) {
-    return (Get-FileHash $Source).Hash -eq (Get-FileHash $Target).Hash
+    return (Get-FileHash -LiteralPath $Source).Hash -eq (Get-FileHash -LiteralPath $Target).Hash
   }
 
-  $sourceFiles = @(Get-ChildItem -Path $Source -Recurse -File)
-  $targetFiles = @(Get-ChildItem -Path $Target -Recurse -File)
+  $sourceFiles = @(Get-ChildItem -Path $Source -Recurse -File -Force)
+  $targetFiles = @(Get-ChildItem -Path $Target -Recurse -File -Force)
   if ($sourceFiles.Count -ne $targetFiles.Count) { return $false }
 
   foreach ($sf in $sourceFiles) {
     $relative = $sf.FullName.Substring($Source.Length).TrimStart('\', '/')
     $tf = Join-Path $Target $relative
-    if (-not (Test-Path $tf)) { return $false }
-    if ((Get-FileHash $sf.FullName).Hash -ne (Get-FileHash $tf).Hash) { return $false }
+    if (-not (Test-Path -LiteralPath $tf)) { return $false }
+    if ((Get-FileHash -LiteralPath $sf.FullName).Hash -ne (Get-FileHash -LiteralPath $tf).Hash) { return $false }
   }
   return $true
 }
@@ -406,7 +413,7 @@ function Sync-DotLink {
     $resolvedTarget = Join-Path $homeDir $relative
   }
 
-  if (-not (Test-Path $Source)) {
+  if (-not (Test-Path -LiteralPath $Source)) {
     Write-Log -Level "WARN" -Message "Sync-DotLink source $Source does not exist - skipping"
     return
   }
@@ -416,7 +423,7 @@ function Sync-DotLink {
     return
   }
 
-  if (Test-Path $resolvedTarget) {
+  if (Test-Path -LiteralPath $resolvedTarget) {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     # Mirrors $resolvedTarget's path under $homeDir into <BackupDir>/<timestamp>/...
     # so a backup's location tells you where it came from. Some callers
