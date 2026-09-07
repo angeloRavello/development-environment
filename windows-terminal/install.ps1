@@ -8,14 +8,19 @@
 #     (never hardcoded - depending on whether pwsh was already on PATH
 #     before this repo ran, it can end up in different places).
 #   - That profile set as the default profile.
-#   - A global "Quake mode" hotkey (Win+`) that drops down a PowerShell 7
-#     window from ANYWHERE in Windows, not just while a WT window is
-#     already open - see https://learn.microsoft.com/windows/terminal/tips-and-tricks#quake-mode.
-#     This needs WT running in the background to catch the hotkey, so
-#     startOnUserLogin/notification-area settings are turned on too so
-#     it's always listening even with every WT window closed.
-#   - A plain in-app keybinding (Ctrl+Alt+P) to open a new PowerShell 7 tab
-#     in an already-open WT window, as a simpler non-global fallback.
+#   - An in-app keybinding (Ctrl+Alt+P) to open a new PowerShell 7 tab in
+#     the current WT window.
+#   - windowingBehavior = "useExisting", so "Open in Terminal" from
+#     Explorer (and any other `wt`/protocol launch) opens a new TAB in the
+#     current window instead of spawning a fresh window every time.
+#   - startOnUserLogin / minimizeToNotificationArea / alwaysShowNotificationIcon
+#     all forced OFF, so WT never lives in the system tray: minimizing goes
+#     to the taskbar like any normal window, and closing every window fully
+#     exits WT - no lingering tray icon, no per-window list in a tray menu.
+#     This script previously turned those ON to power a global Win+` "Quake
+#     mode" summon (which needs WT always running in the background); that
+#     feature was dropped - `git log -p -- windows-terminal/install.ps1` has
+#     it if you ever want it back.
 #
 # This MERGES into WT's existing settings.json (matched by a fixed GUID,
 # so re-running this updates the same profile/actions instead of
@@ -78,25 +83,33 @@ if ($IsWindows) {
       if (-not $settings.ContainsKey("actions")) { $settings["actions"] = @() }
       $actionList = [System.Collections.Generic.List[object]]::new()
       foreach ($a in $settings["actions"]) {
-        $isOurQuakeBinding = $a.ContainsKey("keys") -and $a["keys"] -eq 'win+`'
+        # Drop our Ctrl+Alt+P binding (re-added below) and any Win+` binding
+        # left over from a previous run - this script used to add a
+        # globalSummon "Quake mode" action there and no longer does.
+        $isStaleQuakeBinding = $a.ContainsKey("keys") -and $a["keys"] -eq 'win+`'
         $isOurTabBinding = $a.ContainsKey("keys") -and $a["keys"] -eq "ctrl+alt+p"
-        if (-not $isOurQuakeBinding -and -not $isOurTabBinding) { $actionList.Add($a) }
+        if (-not $isStaleQuakeBinding -and -not $isOurTabBinding) { $actionList.Add($a) }
       }
-      $actionList.Add(@{
-        command = @{ action = "globalSummon"; name = "_quake"; desktop = "toCurrent" }
-        keys    = 'win+`'
-      })
       $actionList.Add(@{
         command = @{ action = "newTab"; profile = $profileGuid }
         keys    = "ctrl+alt+p"
       })
       $settings["actions"] = $actionList
 
-      # Needed for the global hotkey to work even with no WT window open -
-      # otherwise Win+` only works while some WT window already exists.
-      $settings["startOnUserLogin"] = $true
-      $settings["minimizeToNotificationArea"] = $true
-      $settings["alwaysShowNotificationIcon"] = $true
+      # Forced OFF (not just left unset): a previous run of this script may
+      # have written these as true for the old Quake-mode feature, and the
+      # whole point now is that WT never keeps running in the system tray -
+      # minimize goes to the taskbar, closing all windows exits WT.
+      $settings["startOnUserLogin"] = $false
+      $settings["minimizeToNotificationArea"] = $false
+      $settings["alwaysShowNotificationIcon"] = $false
+
+      # Explorer's "Open in Terminal", a bare `wt` from Run, the shell
+      # protocol handler, etc. all open as a new TAB in the current window
+      # instead of a brand-new window each time. "useExisting" reuses the
+      # most-recent window on the CURRENT virtual desktop; "useAnyExisting"
+      # would also yank one over from another desktop, which is more jarring.
+      $settings["windowingBehavior"] = "useExisting"
 
       if (Test-Path $settingsPath) {
         $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -107,7 +120,7 @@ if ($IsWindows) {
       }
 
       ($settings | ConvertTo-Json -Depth 32) | Set-Content -Path $settingsPath -Encoding utf8
-      Write-Log -Tag "windows-terminal" -Message "Done: PowerShell 7 is now the default profile. Win+backtick summons a Quake-style pwsh7 window from anywhere (WT now starts on login and keeps running in the notification area so the hotkey always works). Ctrl+Alt+P opens a new pwsh7 tab inside an existing WT window."
+      Write-Log -Tag "windows-terminal" -Message "Done: PowerShell 7 is now the default profile. Ctrl+Alt+P opens a new pwsh7 tab in the current window. New terminal launches (Explorer's 'Open in Terminal', bare 'wt', etc.) open as a tab in the current window, not a new one. WT no longer starts on login or minimizes to the system tray - minimizing goes to the taskbar, closing all windows exits WT."
     }
   }
 }
