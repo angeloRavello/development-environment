@@ -19,9 +19,6 @@
     3. git        - also a hard dependency: neovim's install step needs
                     `git` on PATH to clone LazyVim.
     4. wezterm, windows-terminal, atac, gh, python, rust, zig, java, yazi,
-       neovim, in that order - "soft" stages: a failure here is logged and
-       the bootstrap keeps going (matching the old `rotz install
-    4. wezterm, windows-terminal, atac, python, rust, zig, java, yazi,
        tmux, neovim, in that order - "soft" stages: a failure here is
        logged and the bootstrap keeps going (matching the old `rotz install
        --continue-on-error` behavior), since none of these block each
