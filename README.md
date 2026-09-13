@@ -20,6 +20,7 @@ for that; it was removed - see "Why no external tool" below.)
 | `mise` | portable zip / official installer | `mise-*-windows-x64.zip` | `curl https://mise.run \| sh` |
 | `wezterm` | portable download, **always nightly** (see below) | `WezTerm-windows-nightly.zip` | portable `.AppImage`, nightly (no apt, no sudo) |
 | `atac` | `mise use --global github:Julien-cpsn/ATAC` (mise's generic GitHub-release backend, no registry entry needed) | via mise | via mise |
+| `gh` (GitHub CLI) | `mise use --global github:cli/cli` (same generic backend, no registry entry needed) | via mise | via mise |
 | `python`, `rust`, `zig` | `mise use --global <tool>` | via mise | via mise |
 | `java` | `mise install` Eclipse Temurin 8, 11, 17, 21 and 25 side-by-side; 25 set as `mise use --global` default | via mise | via mise |
 | `yazi` | `mise use --global yazi` + config + `y` shell wrapper (see below) | via mise | via mise |
@@ -86,7 +87,7 @@ per-stage start/finish/elapsed lines.
       without it.
    3. **git** - also hard: neovim's stage needs `git` on PATH to
       clone/update LazyVim.
-   4. **wezterm, atac, python, rust, zig, java, yazi, neovim**, in that
+   4. **wezterm, atac, gh, python, rust, zig, java, yazi, neovim**, in that
       order - *soft* stages: a failure here is logged and the bootstrap
       keeps going (same spirit as rotz's old `--continue-on-error`), since
       none of these block each other. `neovim` is last because it's the
@@ -273,6 +274,42 @@ pattern `Sync-DotLink` uses for backups: the function body is wrapped in
 replaces everything between them instead of appending a duplicate. Open a
 **new terminal** (or `. $PROFILE` / `source ~/.bashrc`) before `y` is
 available.
+
+## Configuring GitHub CLI (`gh`): login and git integration
+
+`gh/install.ps1` only installs the binary - logging in is a one-time,
+per-machine manual step, same spirit as setting `git config --global
+user.name`/`user.email` (see "Gotchas" below): `gh auth login` is an
+interactive browser/device-code flow, which can't be safely baked into an
+unattended install script.
+
+```powershell
+gh auth login
+```
+
+Pick `github.com`, then `HTTPS` or `SSH` as the git protocol, then `Login
+with a web browser` (opens github.com and asks you to enter a one-time
+code). Run `gh auth status` afterwards to confirm.
+
+**Making `git push`/`git pull` authenticate through `gh`:** the login flow
+above already offers to do this for you ("Authenticate Git with your
+GitHub credentials?" -> yes). If you said no, or need to (re)apply it
+later - e.g. after `git/gitconfig` gets redeployed by `Sync-DotLink` on a
+future bootstrap run - configure it explicitly:
+
+```powershell
+gh auth setup-git
+```
+
+This registers `gh` as git's credential helper for every host you're
+logged into (`github.com`, and `gist.github.com` if you use it), by
+writing `credential.https://github.com.helper` entries into your git
+config - so an HTTPS `git push`/`git pull` authenticates via whatever
+`gh auth login` already stored (browser token or PAT), with no separate
+PAT/SSH key management needed. This is additive to `git/gitconfig` (this
+repo's tracked file, deployed via `Sync-DotLink`) - it doesn't touch
+`user.name`/`user.email`, only the credential helper for GitHub hosts, so
+re-running the bootstrap (which redeploys `git/gitconfig`) never undoes it.
 
 ## LazyVim: cloned once, updated on every re-run
 

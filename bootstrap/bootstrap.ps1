@@ -18,7 +18,7 @@
                     bootstrap on failure instead of continuing.
     3. git        - also a hard dependency: neovim's install step needs
                     `git` on PATH to clone LazyVim.
-    4. wezterm, windows-terminal, atac, python, rust, zig, java, yazi,
+    4. wezterm, windows-terminal, atac, gh, python, rust, zig, java, yazi,
        neovim, in that order - "soft" stages: a failure here is logged and
        the bootstrap keeps going (matching the old `rotz install
        --continue-on-error` behavior), since none of these block each
@@ -94,6 +94,7 @@ $softStages = [ordered]@{
   "wezterm"          = { & (Join-Path $RepoRoot "wezterm" "install.ps1") }
   "windows-terminal" = { & (Join-Path $RepoRoot "windows-terminal" "install.ps1") }   # Windows-only; no-ops on Linux
   "atac"             = { & (Join-Path $RepoRoot "atac" "install.ps1") }
+  "gh"               = { & (Join-Path $RepoRoot "gh" "install.ps1") }
   "python"           = { & (Join-Path $RepoRoot "python" "install.ps1") }
   "rust"             = { & (Join-Path $RepoRoot "rust" "install.ps1") }
   "zig"              = { & (Join-Path $RepoRoot "zig" "install.ps1") }

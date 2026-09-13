@@ -36,7 +36,7 @@ bootstrap/
   bootstrap.ps1  - pwsh7 orchestrator: fixed stage order (see below), logging, summary
   common.ps1     - shared functions, see next section
   paths.env      - DOWNLOADS_DIR/INSTALL_DIR/BACKUP_DIR config (see below)
-<tool>/          - git, mise, wezterm, windows-terminal, atac, python, rust, zig, java, yazi, neovim
+<tool>/          - git, mise, wezterm, windows-terminal, atac, gh, python, rust, zig, java, yazi, neovim
   install.ps1    - installs the tool + deploys its own config via Sync-DotLink
   <config files> - whatever that tool's install.ps1 deploys (e.g. git/gitconfig)
 ```
@@ -57,7 +57,7 @@ bootstrap/
    1. Environment variables (`$env:DOTFILES`; Windows-only `XDG_*`).
    2. **mise** — hard dependency (no `-ContinueOnError`): python/rust/zig/java/yazi/neovim all need it, so a failure here throws and aborts the whole script instead of cascading into confusing downstream failures.
    3. **git** — also hard: neovim's stage needs `git` on PATH.
-   4. `$softStages` (ordered hashtable, `-ContinueOnError`): `wezterm`, `windows-terminal`, `atac`, `python`, `rust`, `zig`, `java`, `yazi`, `neovim` — in that literal order. `windows-terminal` no-ops on Linux (nothing to configure there). `neovim` is last because it's the one stage needing both hard dependencies above. Add new tools to this hashtable, in dependency order relative to whatever they need.
+   4. `$softStages` (ordered hashtable, `-ContinueOnError`): `wezterm`, `windows-terminal`, `atac`, `gh`, `python`, `rust`, `zig`, `java`, `yazi`, `neovim` — in that literal order. `windows-terminal` no-ops on Linux (nothing to configure there). `neovim` is last because it's the one stage needing both hard dependencies above. Add new tools to this hashtable, in dependency order relative to whatever they need.
    5. Summary: per-stage `OK`/`FAILED` plus total elapsed, from the `$results` collected by each `Invoke-Stage` call.
 
 If you add a tool whose failure would make everything after it pointless (like mise/git), give it its own `Invoke-Stage` call with no `-ContinueOnError`, placed before `$softStages`, not inside the hashtable.
@@ -134,6 +134,7 @@ Every `Invoke-WebRequest`/`Invoke-RestMethod` call passes an explicit `-TimeoutS
 
 - **Never commit a tracked `mise/config.toml` at the repo root.** `mise` recognizes `mise/config.toml` (relative to cwd) as one of its own local-project config file names, so a repo-tracked one makes every `mise` invocation from inside this repo prompt to "trust" and load it as a project config. Tool versions are pinned instead by each tool's `install.ps1` running `mise use --global <tool>`, which writes straight to mise's real global config (`~/.config/mise/config.toml`).
 - `git/gitconfig` ships without `user.name`/`user.email` — these must be set per-machine (`git config --global user.name "..."`) or by editing the tracked file directly (then re-run the bootstrap, or call `Sync-DotLink` by hand, to redeploy it — editing the file alone doesn't touch what's already deployed at `~/.gitconfig`).
+- `gh/install.ps1` only installs the binary — `gh auth login` (interactive browser/device-code flow) and, if needed, `gh auth setup-git` (wires `gh` in as git's credential helper so HTTPS `push`/`pull` authenticate through it) are manual per-machine steps, same spirit as `user.name`/`user.email` above — see README.md's "Configuring GitHub CLI" section.
 - `mise/install.ps1` shells out to `bash -c "curl ... | sh"` on Linux for mise's own official installer — this is the one intentional exception to "everything is pwsh", since it's the vendor-documented install method, not custom logic worth reimplementing.
 - There is no `dot.yaml`, no `config.yaml`, no `depends:` resolution — if you find yourself wanting to declare a dependency between tools, express it as ordering in `bootstrap.ps1`'s stage list instead (see "Bootstrap flow" above).
 - **Never build a filesystem path with string interpolation and a literal `/` or `\`.** Always use `Join-Path` (it takes more than two segments via `-AdditionalChildPath`, e.g. `Join-Path $paths.InstallDir "git" "cmd" "git.exe"`). Every path-bearing variable in this repo (`$PSScriptRoot`, `$HomeDir`, anything from `Get-BootstrapPaths`) already carries the current OS's separator, so splicing in `"$dir/child"` produces a mixed `D:\tools\apps/wezterm`-style path on Windows — this exact bug shipped in `common.ps1`/every `install.ps1`'s dot-source line and was only caught by reading raw log output. The one place a literal `"~/relative/path"` string with forward slashes is still correct as a *call-site* convention is `Sync-DotLink -Target` — `Sync-DotLink` itself normalizes it via `Join-Path` before touching disk, so don't "fix" call sites that pass `"~/..."` into it.
