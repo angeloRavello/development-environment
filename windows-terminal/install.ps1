@@ -38,7 +38,17 @@ if ($IsWindows) {
   if (-not $pwshCmd) {
     Write-Log -Tag "windows-terminal" -Level "WARN" -Message "pwsh not found on PATH - run bootstrap/prereq.ps1 first. Skipping Windows Terminal configuration."
   } else {
-    $pwshExe = $pwshCmd.Source
+    # Get-Command resolves past the App Execution Alias reparse point to the
+    # real target - fine for a portable pwsh7 (this repo's own install under
+    # INSTALL_DIR, a stable path), but wrong for a Store/MSIX-installed pwsh:
+    # .Source there is a version-pinned folder
+    # (Microsoft.PowerShell_7.x.x.0_x64__...) that disappears the moment the
+    # Store silently updates the package, breaking this hardcoded commandline
+    # with no warning. The alias itself, at a fixed path Windows keeps
+    # pointing at whatever version is currently installed, is what should be
+    # used whenever it exists.
+    $storeAlias = Join-Path $env:LOCALAPPDATA "Microsoft" "WindowsApps" "pwsh.exe"
+    $pwshExe = (Test-Path $storeAlias) ? $storeAlias : $pwshCmd.Source
 
     # The Store-packaged build (how Windows 11 ships it by default) keeps
     # user settings under a per-package LocalState folder whose exact name
