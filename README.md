@@ -24,6 +24,7 @@ for that; it was removed - see "Why no external tool" below.)
 | `python`, `rust`, `zig` | `mise use --global <tool>` | via mise | via mise |
 | `java` | `mise install` Eclipse Temurin 8, 11, 17, 21 and 25 side-by-side; 25 set as `mise use --global` default | via mise | via mise |
 | `yazi` | `mise use --global yazi` + config + `y` shell wrapper (see below) | via mise | via mise |
+| `lazygit` | `mise use --global lazygit` (used by LazyVim's `<leader>gg`) | via mise | via mise |
 | `tmux` | `mise use --global tmux` (registry: `aqua:tmux/tmux-builds`) + config. **Linux only** - no native Windows build; WezTerm's own multiplexer covers that | n/a (no-op) | via mise |
 | `neovim` + `LazyVim` | `mise use --global neovim` + clone/update [LazyVim/starter](https://github.com/LazyVim/starter) (see below) | via mise | via mise |
 
@@ -89,7 +90,7 @@ per-stage start/finish/elapsed lines.
    3. **git** - also hard: neovim's stage needs `git` on PATH to
       clone/update LazyVim.
    4. **wezterm, windows-terminal, atac, gh, python, rust, zig, java, yazi,
-      tmux, neovim**, in that order - *soft* stages: a failure here is logged and the
+      tmux, lazygit, neovim**, in that order - *soft* stages: a failure here is logged and the
       bootstrap keeps going (same spirit as rotz's old `--continue-on-error`),
       since none of these block each other. `windows-terminal` no-ops on
       Linux and `tmux` no-ops on Windows (no native build - WezTerm's own

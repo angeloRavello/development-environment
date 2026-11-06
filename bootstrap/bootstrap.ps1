@@ -101,6 +101,7 @@ $softStages = [ordered]@{
   "java"             = { & (Join-Path $RepoRoot "java" "install.ps1") }
   "yazi"             = { & (Join-Path $RepoRoot "yazi" "install.ps1") }
   "tmux"             = { & (Join-Path $RepoRoot "tmux" "install.ps1") }     # Linux-only; no-ops on Windows
+  "lazygit"          = { & (Join-Path $RepoRoot "lazygit" "install.ps1") }  # before neovim: LazyVim's <leader>gg uses it
   "neovim"           = { & (Join-Path $RepoRoot "neovim" "install.ps1") }   # last: needs both mise and git
 }
 
