@@ -119,3 +119,6 @@ vim.api.nvim_create_autocmd("DirChanged", {
     end)
   end,
 })
+
+-- gd/gf inside pom.xml: jump to module, parent and dependency poms.
+require("config.maven").setup()
