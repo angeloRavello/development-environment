@@ -17,6 +17,24 @@ There is no build, lint, or test suite — this is configuration, not applicatio
 - **Parse-check a script without running it:** `pwsh -Command "[System.Management.Automation.Language.Parser]::ParseFile('<path>', [ref]$null, [ref]$null)"` — any parse errors land in the second `[ref]` output
 - Always open a **new terminal** after a bootstrap run before verifying PATH/env var changes — they're written to `HKCU\Environment` / shell profiles, not the current process.
 
+## Git workflow — commit to `master`, no side branches
+
+- **Every change made by an AI agent is committed directly on `master`.** Do not create feature/topic branches, and do not open PRs, unless the user explicitly asks for one in that conversation.
+- **If any branch other than `master` exists** (local or remote — check `git branch -a`), stop and ask the user whether it should be integrated into `master` before doing anything else with it. Do not merge, rebase, or delete it on your own, and do not build new commits on top of it.
+- **Every commit follows [Conventional Commits](https://www.conventionalcommits.org/):**
+  ```
+  <type>(<scope>): <subject>
+
+  <body>
+  ```
+  - `type`: one of `feat`, `fix`, `docs`, `refactor`, `chore`, `perf`, `test`, `build`, `ci`, `style`, `revert`.
+  - `scope`: the tool folder or area touched (`neovim`, `lazygit`, `wezterm`, `bootstrap`, ...). Omit it only when a commit genuinely spans the whole repo.
+  - `subject`: imperative mood ("add", not "added"/"adds"), lowercase start, no trailing period, header line at most 72 characters.
+  - `body`: optional for trivial changes, otherwise required — explain *why* the change was made, not a file-by-file restatement of the diff. Wrap at 72 characters.
+  - Breaking changes: `!` after the type/scope (`feat(bootstrap)!: ...`) plus a `BREAKING CHANGE:` footer.
+  - One logical change per commit: unrelated changes (e.g. a neovim fix and a new tool) go in separate commits, each with its own docs/README updates.
+  - No AI attribution of any kind — no `Co-Authored-By`, no "Generated with" lines.
+
 ## No external orchestration tool — this repo used to use rotz, and no longer does
 
 Every script here is PowerShell 7 (`pwsh`), including the orchestration itself: `bootstrap/bootstrap.ps1` calls each tool's `install.ps1` directly, in a fixed, explicit, hardcoded order — there is no dependency-manifest file (no `dot.yaml`, no `config.yaml`) and no generic dependency resolver.
