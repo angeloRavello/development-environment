@@ -16,8 +16,10 @@
 -- <source>/<target> than 25 - without registering every installed JDK as
 -- a named "runtime", jdtls would try to compile/run that code against
 -- JDK 25 anyway, which can misbehave or just be wrong for that project.
+--
+-- The extra itself is imported from config/lazy.lua, not here - LazyVim
+-- requires extras to load before anything under plugins/.
 return {
-  { import = "lazyvim.plugins.extras.lang.java" },
   {
     "mfussenegger/nvim-jdtls",
     opts = function(_, opts)

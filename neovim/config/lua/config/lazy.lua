@@ -1,6 +1,6 @@
 -- Bootstraps lazy.nvim and LazyVim. This is LazyVim's own starter file,
--- kept as-is - customize options.lua / keymaps.lua / autocmds.lua / plugins/
--- instead of this one.
+-- kept as-is except for the extras imports in the spec below - customize
+-- options.lua / keymaps.lua / autocmds.lua / plugins/ instead of this one.
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not (vim.uv or vim.loop).fs_stat(lazypath) then
   local lazyrepo = "https://github.com/folke/lazy.nvim.git"
@@ -21,6 +21,16 @@ require("lazy").setup({
   spec = {
     -- add LazyVim and import its plugins
     { "LazyVim/LazyVim", import = "lazyvim.plugins" },
+    -- LazyVim extras must be imported here, after lazyvim.plugins and before
+    -- your own plugins - importing them from inside plugins/ trips LazyVim's
+    -- import-order check on startup.
+    -- Language support matching the toolchains this dotfiles repo installs
+    -- (../python, ../rust, ../zig, ../java). Java's multi-JDK overrides
+    -- live in plugins/java.lua.
+    { import = "lazyvim.plugins.extras.lang.python" },
+    { import = "lazyvim.plugins.extras.lang.rust" },
+    { import = "lazyvim.plugins.extras.lang.zig" },
+    { import = "lazyvim.plugins.extras.lang.java" },
     -- import/override with your plugins
     { import = "plugins" },
   },

@@ -1,0 +1,6 @@
+# Base markdownlint-cli2 config for markdown files edited in Neovim, passed via
+# --config from lua/plugins/markdown.lua. A project's own .markdownlint* files
+# still apply on top of this.
+config:
+  # Line length - too noisy for prose, and wrapping is left to the editor.
+  MD013: false

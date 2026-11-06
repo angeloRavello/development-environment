@@ -33,3 +33,4 @@ if (Test-Path (Join-Path $nvimConfig ".git")) {
 $paths = Get-BootstrapPaths
 Sync-DotLink -Source (Join-Path $PSScriptRoot "config" "lua" "config") -Target (Join-Path $nvimConfig "lua" "config") -BackupDir $paths.BackupDir
 Sync-DotLink -Source (Join-Path $PSScriptRoot "config" "lua" "plugins") -Target (Join-Path $nvimConfig "lua" "plugins") -BackupDir $paths.BackupDir
+Sync-DotLink -Source (Join-Path $PSScriptRoot "config" "markdownlint-cli2.yaml") -Target (Join-Path $nvimConfig ".markdownlint-cli2.yaml") -BackupDir $paths.BackupDir
