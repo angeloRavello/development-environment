@@ -18,6 +18,7 @@ for that; it was removed - see "Why no external tool" below.)
 |---|---|---|---|
 | `git` | portable download, no admin | `PortableGit-*-64-bit.7z.exe` from git-for-windows | `apt` (sudo) or manual if no sudo |
 | `mise` | portable zip / official installer | `mise-*-windows-x64.zip` | `curl https://mise.run \| sh` |
+| `fonts` | JetBrainsMono Nerd Font from `ryanoasis/nerd-fonts` releases, **per-user** (no admin) - needed for Neovim/LazyVim icons; set as the default font in Windows Terminal and WezTerm | `%LOCALAPPDATA%\Microsoft\Windows\Fonts` + `HKCU` registration | `~/.local/share/fonts` + `fc-cache` |
 | `wezterm` | portable download, **always nightly** (see below) | `WezTerm-windows-nightly.zip` | portable `.AppImage`, nightly (no apt, no sudo) |
 | `atac` | `mise use --global github:Julien-cpsn/ATAC` (mise's generic GitHub-release backend, no registry entry needed) | via mise | via mise |
 | `gh` (GitHub CLI) | `mise use --global github:cli/cli` (same generic backend, no registry entry needed) | via mise | via mise |
@@ -89,7 +90,7 @@ per-stage start/finish/elapsed lines.
       without it.
    3. **git** - also hard: neovim's stage needs `git` on PATH to
       clone/update LazyVim.
-   4. **wezterm, windows-terminal, atac, gh, python, rust, zig, java, yazi,
+   4. **fonts, wezterm, windows-terminal, atac, gh, python, rust, zig, java, yazi,
       tmux, lazygit, neovim**, in that order - *soft* stages: a failure here is logged and the
       bootstrap keeps going (same spirit as rotz's old `--continue-on-error`),
       since none of these block each other. `windows-terminal` no-ops on

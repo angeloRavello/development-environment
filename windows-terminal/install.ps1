@@ -8,6 +8,8 @@
 #     (never hardcoded - depending on whether pwsh was already on PATH
 #     before this repo ran, it can end up in different places).
 #   - That profile set as the default profile.
+#   - JetBrainsMono Nerd Font (installed by fonts/install.ps1) as the
+#     default font for every profile, so Neovim's icons render.
 #   - An in-app keybinding (Ctrl+Alt+P) to open a new PowerShell 7 tab in
 #     the current WT window.
 #   - windowingBehavior = "useExisting", so "Open in Terminal" from
@@ -89,6 +91,26 @@ if ($IsWindows) {
       })
       $settings["profiles"]["list"] = $profileList
       $settings["defaultProfile"] = $profileGuid
+
+      # Nerd Font as the default for EVERY profile (profiles.defaults, not
+      # just ours): Neovim/LazyVim icons are drawn by WT itself, also in
+      # WSL/SSH tabs, and Cascadia Mono has none of them. Only set once
+      # fonts/install.ps1 (or a system-wide install) actually put the font
+      # on disk - WT shows an error banner for a font face it can't find.
+      # Other font.* keys (size, weight) already in defaults are kept.
+      $nerdFontFace = "JetBrainsMono Nerd Font"
+      $nerdFontFile = "JetBrainsMonoNerdFont-Regular.ttf"
+      $nerdFontInstalled = (Test-Path (Join-Path $env:LOCALAPPDATA "Microsoft" "Windows" "Fonts" $nerdFontFile)) -or (Test-Path (Join-Path $env:WINDIR "Fonts" $nerdFontFile))
+      if ($nerdFontInstalled) {
+        $defaults = $settings["profiles"]["defaults"] ?? @{}
+        $font = $defaults["font"] ?? @{}
+        $font["face"] = $nerdFontFace
+        $defaults["font"] = $font
+        $settings["profiles"]["defaults"] = $defaults
+        Write-Log -Tag "windows-terminal" -Message "Default font for all profiles: $nerdFontFace"
+      } else {
+        Write-Log -Tag "windows-terminal" -Level "WARN" -Message "$nerdFontFace not installed - leaving the font unchanged (run fonts/install.ps1 first; Neovim icons will render as boxes until then)"
+      }
 
       if (-not $settings.ContainsKey("actions")) { $settings["actions"] = @() }
       $actionList = [System.Collections.Generic.List[object]]::new()

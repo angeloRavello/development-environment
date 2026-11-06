@@ -13,7 +13,10 @@ local wezterm = require("wezterm")
 local config = wezterm.config_builder()
 
 config.color_scheme = "Tokyo Night"
-config.font = wezterm.font_with_fallback({ "JetBrains Mono", "Cascadia Code", "monospace" })
+-- Nerd Font first (installed by fonts/install.ps1) so Neovim/yazi icons use
+-- the same face as the text; WezTerm's built-in Nerd Font symbols are only a
+-- fallback if it's missing.
+config.font = wezterm.font_with_fallback({ "JetBrainsMono Nerd Font", "JetBrains Mono", "Cascadia Code", "monospace" })
 config.font_size = 11.0
 
 config.window_decorations = "RESIZE"

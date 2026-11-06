@@ -54,7 +54,7 @@ bootstrap/
   bootstrap.ps1  - pwsh7 orchestrator: fixed stage order (see below), logging, summary
   common.ps1     - shared functions, see next section
   paths.env      - DOWNLOADS_DIR/INSTALL_DIR/BACKUP_DIR config (see below)
-<tool>/          - git, mise, wezterm, windows-terminal, atac, gh, python, rust, zig, java, yazi, tmux, lazygit, neovim
+<tool>/          - git, mise, fonts, wezterm, windows-terminal, atac, gh, python, rust, zig, java, yazi, tmux, lazygit, neovim
   install.ps1    - installs the tool + deploys its own config via Sync-DotLink
   <config files> - whatever that tool's install.ps1 deploys (e.g. git/gitconfig)
 ```
@@ -75,7 +75,7 @@ bootstrap/
    1. Environment variables (`$env:DOTFILES`; Windows-only `XDG_*`).
    2. **mise** — hard dependency (no `-ContinueOnError`): atac/gh/python/rust/zig/java/yazi/tmux/lazygit/neovim all need it, so a failure here throws and aborts the whole script instead of cascading into confusing downstream failures.
    3. **git** — also hard: neovim's stage needs `git` on PATH.
-   4. `$softStages` (ordered hashtable, `-ContinueOnError`): `wezterm`, `windows-terminal`, `atac`, `gh`, `python`, `rust`, `zig`, `java`, `yazi`, `tmux`, `lazygit`, `neovim` — in that literal order. `windows-terminal` no-ops on Linux (nothing to configure there); `tmux` no-ops on Windows (no native build — WezTerm's own multiplexer covers Windows). `neovim` is last because it's the one stage needing both hard dependencies above. Add new tools to this hashtable, in dependency order relative to whatever they need.
+   4. `$softStages` (ordered hashtable, `-ContinueOnError`): `fonts`, `wezterm`, `windows-terminal`, `atac`, `gh`, `python`, `rust`, `zig`, `java`, `yazi`, `tmux`, `lazygit`, `neovim` — in that literal order. `windows-terminal` no-ops on Linux (nothing to configure there); `tmux` no-ops on Windows (no native build — WezTerm's own multiplexer covers Windows). `neovim` is last because it's the one stage needing both hard dependencies above. Add new tools to this hashtable, in dependency order relative to whatever they need.
    5. Summary: per-stage `OK`/`FAILED` plus total elapsed, from the `$results` collected by each `Invoke-Stage` call.
 
 If you add a tool whose failure would make everything after it pointless (like mise/git), give it its own `Invoke-Stage` call with no `-ContinueOnError`, placed before `$softStages`, not inside the hashtable.
@@ -133,6 +133,8 @@ Every install path in this repo is derived from `$env:USERPROFILE`/`$HOME`, neve
 PATH changes on Windows go to the **user** registry hive (`HKCU\Environment`) only, never machine-wide PATH. Any new install script must preserve this — no admin/sudo dependency anywhere it's technically avoidable.
 
 `git` and `wezterm` are fetched directly from GitHub Releases as portable zips/AppImage/self-extracting archives (verified against `github.com/jdx/mise/registry/*.toml` to confirm they aren't in mise's registry) rather than via mise, with `$IsWindows`/`$IsLinux` branches inside a single `install.ps1` (`git` has an apt branch on Linux; `wezterm` does not — see above). `python`/`rust`/`zig` install via a plain `Invoke-ExternalCommand -Exe "mise" -Arguments @("use", "--global", "<tool>")` one-liner install.ps1 — genuinely OS-agnostic, nothing else to do. `neovim` and `yazi` both need more than the mise install itself: `neovim` clones/updates LazyVim (see above), `yazi` adds the `y` shell wrapper. `tmux` is a mise install plus a `Sync-DotLink` of its config, but **Linux only** — it `return`s early on Windows (no native tmux build; WezTerm's built-in multiplexer covers Windows). Its install.ps1 also moves any pre-existing `~/.tmux.conf` into `BackupDir`, since tmux 3.1+ reads `~/.config/tmux/tmux.conf` in preference and a leftover would just be dead config. `java` needs multiple JDK versions side-by-side (see below).
+
+`fonts` installs JetBrainsMono Nerd Font per-user (Windows: `%LOCALAPPDATA%\Microsoft\Windows\Fonts` + `HKCU\...\Fonts` registration; Linux: `~/.local/share/fonts` + `fc-cache`) and runs before `wezterm`/`windows-terminal`, which select it by family name (`JetBrainsMono Nerd Font`). Without it LazyVim's icons render as boxes/garbage — the font is drawn by the terminal on the *Windows* side even when nvim runs on Linux over SSH/WSL, so a Linux-only bootstrap doesn't fix a Windows Terminal window. `windows-terminal/install.ps1` sets it in `profiles.defaults.font.face` (every profile, incl. WSL/SSH ones) only when the .ttf is actually on disk, since WT errors on a missing face.
 
 ### Java: multiple JDKs side-by-side
 

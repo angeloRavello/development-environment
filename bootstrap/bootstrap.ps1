@@ -91,6 +91,7 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 
 # --- Remaining stages: soft dependencies, explicit fixed order, continue past failures ---
 $softStages = [ordered]@{
+  "fonts"            = { & (Join-Path $RepoRoot "fonts" "install.ps1") }     # before wezterm/windows-terminal: both select the Nerd Font
   "wezterm"          = { & (Join-Path $RepoRoot "wezterm" "install.ps1") }
   "windows-terminal" = { & (Join-Path $RepoRoot "windows-terminal" "install.ps1") }   # Windows-only; no-ops on Linux
   "atac"             = { & (Join-Path $RepoRoot "atac" "install.ps1") }
