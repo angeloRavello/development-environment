@@ -24,6 +24,9 @@ require("lazy").setup({
     -- LazyVim extras must be imported here, after lazyvim.plugins and before
     -- your own plugins - importing them from inside plugins/ trips LazyVim's
     -- import-order check on startup.
+    -- Debugger (nvim-dap). The java extra only wires up debugging and its
+    -- test runner (<leader>tt/tr/tT) when nvim-dap is present.
+    { import = "lazyvim.plugins.extras.dap.core" },
     -- Language support matching the toolchains this dotfiles repo installs
     -- (../python, ../rust, ../zig, ../java). Java's multi-JDK overrides
     -- live in plugins/java.lua.
